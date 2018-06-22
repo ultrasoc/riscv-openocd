@@ -369,6 +369,10 @@ AC_ARG_ENABLE([remote-bitbang],
   AS_HELP_STRING([--enable-remote-bitbang], [Enable building support for the Remote Bitbang jtag driver]),
   [build_remote_bitbang=$enableval], [build_remote_bitbang=no])
 
+AC_ARG_ENABLE([ust-jtagprobe],
+  AS_HELP_STRING([--enable-ust-jtagprobe], [Enable building support for the UltraSoC Technologies jtagprobe interface]),
+  [build_ust_jtagprobe=$enableval], [build_ust_jtagprobe=no])
+
 AC_MSG_CHECKING([whether to enable dummy minidriver])
 AS_IF([test "x$build_minidriver_dummy" = "xyes"], [
   AS_IF([test "x$build_minidriver" = "xyes"], [
@@ -586,6 +590,12 @@ AS_IF([test "x$build_remote_bitbang" = "xyes"], [
   AC_DEFINE([BUILD_REMOTE_BITBANG], [0], [0 if you don't want the Remote Bitbang JTAG driver.])
 ])
 
+AS_IF([test "x$build_ust_jtagprobe" = "xyes"], [
+  AC_DEFINE([BUILD_UST_JTAGPROBE], [1], [1 if you want the UltraSoC Jtagprobe driver.])
+], [
+  AC_DEFINE([BUILD_UST_JTAGPROBE], [0], [0 if you don't want UltraSoC Jtagprobe driver.])
+])
+
 AS_IF([test "x$build_sysfsgpio" = "xyes"], [
   build_bitbang=yes
   AC_DEFINE([BUILD_SYSFSGPIO], [1], [1 if you want the SysfsGPIO driver.])
@@ -726,6 +736,8 @@ AM_CONDITIONAL([TARGET64], [test "x$build_target64" = "xyes"])
 
 AM_CONDITIONAL([MINIDRIVER], [test "x$build_minidriver" = "xyes"])
 AM_CONDITIONAL([MINIDRIVER_DUMMY], [test "x$build_minidriver_dummy" = "xyes"])
+
+AM_CONDITIONAL([UST_JTAGPROBE], [test x$build_ust_jtagprobe = "xyes"])
 
 AM_CONDITIONAL([INTERNAL_JIMTCL], [test "x$use_internal_jimtcl" = "xyes"])
 AM_CONDITIONAL([INTERNAL_LIBJAYLINK], [test "x$use_internal_libjaylink" = "xyes"])

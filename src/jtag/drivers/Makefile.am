@@ -163,6 +163,11 @@ if XDS110
 DRIVERFILES += %D%/xds110.c
 endif
 
+if UST_JTAGPROBE
+DRIVERFILES += %D%/ust_jtagprobe/ust_driver.c
+DRIVERFILES += %D%/ust_jtagprobe/ust_jtagprobe.c
+endif
+
 DRIVERHEADERS = \
 	%D%/bitbang.h \
 	%D%/bitq.h \
@@ -180,5 +185,5 @@ DRIVERHEADERS = \
 	%D%/versaloon/usbtoxxx/usbtoxxx_internal.h \
 	%D%/versaloon/versaloon.h \
 	%D%/versaloon/versaloon_include.h \
-	%D%/versaloon/versaloon_internal.h
-
+	%D%/versaloon/versaloon_internal.h \
+	%D%/ust_jtagprobe/ust_jtagprobe.h
