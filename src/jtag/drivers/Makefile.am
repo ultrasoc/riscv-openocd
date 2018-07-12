@@ -168,6 +168,11 @@ DRIVERFILES += %D%/ust_jtagprobe/ust_driver.c
 DRIVERFILES += %D%/ust_jtagprobe/ust_jtagprobe.c
 endif
 
+if UST_MMAP
+DRIVERFILES += %D%/ust_mmap/ust_mmap_driver.c
+DRIVERFILES += %D%/ust_mmap/ust_mmap.c
+endif
+
 DRIVERHEADERS = \
 	%D%/bitbang.h \
 	%D%/bitq.h \

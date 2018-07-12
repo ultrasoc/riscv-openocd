@@ -1,0 +1,4 @@
+#ifndef OPENOCD_UST_MMAP_H
+#define OPENOCD_UST_MMAP_H
+
+#endif /* OPENOCD_UST_MMAP_H */
