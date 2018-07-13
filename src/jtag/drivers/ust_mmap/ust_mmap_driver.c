@@ -9,16 +9,34 @@
 
 char * ust_mmap_host;
 char * ust_mmap_port;
+ust_mmap_t * ust_ctx;
 
 static int ust_mmap_init(void)
 {
-	/* TODO */
+	int err;
+	LOG_INFO("ust_mmap intializing driver");
+
+	ust_ctx = ust_mmap_create();
+	err = ust_mmap_connect(ust_ctx,
+								ust_mmap_host,
+								ust_mmap_port);
+	if (err != ERROR_OK) {
+		LOG_ERROR("Error initializing ust_mmap driver");
+		ust_mmap_destroy(ust_ctx);
+		return ERROR_FAIL;
+	}
+
+	LOG_INFO("ust_mmap driver initialized");
 	return ERROR_OK;
 }
 
 static int ust_mmap_quit(void)
 {
-	/* TODO */
+	LOG_INFO("ust_mmap quit");
+
+	ust_mmap_disconnect(ust_ctx);
+	ust_mmap_destroy(ust_ctx);
+
 	return ERROR_OK;
 }
 
