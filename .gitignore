@@ -97,6 +97,7 @@ TAGS
 
 # CScope database files
 *cscope.out
+*cscope.files
 
 # ctags tag files
 tags
