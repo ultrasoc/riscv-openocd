@@ -749,6 +749,7 @@ AM_CONDITIONAL([MINIDRIVER_DUMMY], [test "x$build_minidriver_dummy" = "xyes"])
 
 AM_CONDITIONAL([UST_JTAGPROBE], [test x$build_ust_jtagprobe = "xyes"])
 AM_CONDITIONAL([UST_MMAP], [test x$build_ust_mmap = "xyes"])
+AM_CONDITIONAL([MMAP_TRANSPORT], [test x$build_ust_mmap = "xyes"])
 
 AM_CONDITIONAL([INTERNAL_JIMTCL], [test "x$use_internal_jimtcl" = "xyes"])
 AM_CONDITIONAL([INTERNAL_LIBJAYLINK], [test "x$use_internal_libjaylink" = "xyes"])
