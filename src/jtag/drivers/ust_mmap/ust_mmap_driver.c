@@ -4,6 +4,8 @@
 
 #include "ust_mmap.h"
 
+#include "jtag/mmap/mmap_interface.h"
+
 #include "jtag/interface.h"
 #include "jtag/commands.h"
 
@@ -80,13 +82,32 @@ static const struct command_registration ust_mmap_command_handlers[] = {
 
 static int ust_mmap_execute_queue(void)
 {
-	/* TODO */
+	/* Nothing to do */
 	return ERROR_OK;
 }
+
+int ust_mmap_do_read(uint64_t addr, int byte_len, uint8_t *data)
+{
+	return ust_mmap_read(ust_ctx, addr, byte_len, data);
+}
+
+int ust_mmap_do_write(uint64_t addr, int byte_len, uint8_t *data)
+{
+	return ust_mmap_write(ust_ctx, addr, byte_len, data);
+}
+
+const struct mmap_interface ust_mmap = {
+	.read = ust_mmap_do_read,
+	.write = ust_mmap_do_write,
+};
+
+static const char* const ust_mmap_transports[] = { "mmap", NULL };
 
 struct jtag_interface ust_mmap_interface = {
 	.name = "ust_mmap",
 	.execute_queue = &ust_mmap_execute_queue,
+	.transports = ust_mmap_transports,
+	.mmap = &ust_mmap,
 	.commands = ust_mmap_command_handlers,
 	.init = &ust_mmap_init,
 	.quit = &ust_mmap_quit,

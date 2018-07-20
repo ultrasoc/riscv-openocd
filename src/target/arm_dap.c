@@ -115,6 +115,11 @@ static int dap_init_all(void)
 		if (!dap->tap->enabled)
 			continue;
 
+		/* BRH */
+		if (transport_is_mmap()) {
+			return 0; /* BRH: TODO */
+		}
+
 		if (transport_is_swd()) {
 			dap->ops = &swd_dap_ops;
 			obj->swd = jtag_interface->swd;
