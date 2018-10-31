@@ -152,6 +152,13 @@ struct adiv5_ap {
 	uint8_t ap_num;
 
 	/**
+	 * Are the MEM-AP registers (e.g TAR and CSW) accessible?
+	 * Generally true for jtag and swd transports
+	 * but not true for mmap transport.
+	 */
+	bool use_mem_ap_regs;
+
+	/**
 	 * Default value for (MEM-AP) AP_REG_CSW register.
 	 */
 	uint32_t csw_default;
@@ -251,6 +258,11 @@ struct adiv5_dap {
 	/** Flag saying whether to ignore the syspwrupack flag in DAP. Some devices
 	 *  do not set this bit until later in the bringup sequence */
 	bool ignore_syspwrupack;
+
+	/** Instead of a dap memory mapped accesses are used.
+	 *  E.g. when controlling via a dma driver or theoretically from another cpu
+	 *  on the target. */
+	bool mmap_mode;
 };
 
 /**
@@ -286,6 +298,16 @@ struct dap_ops {
 	/** Executes all queued DAP operations but doesn't check
 	 * sticky error conditions */
 	int (*sync)(struct adiv5_dap *dap);
+
+	/** AP buffer read. Only in mmap_mode */
+	int (*queue_ap_read_buf)(struct adiv5_ap *ap,
+							 uint8_t *buffer, uint32_t size,
+							 uint32_t count, uint32_t address);
+
+	/** AP buffer write. Only in mmap_mode */
+	int (*queue_ap_write_buf)(struct adiv5_ap *ap,
+							  const uint8_t *buffer, uint32_t size,
+							  uint32_t count, uint32_t address);
 };
 
 /*
@@ -417,6 +439,32 @@ static inline int dap_sync(struct adiv5_dap *dap)
 	return ERROR_OK;
 }
 
+static inline int dap_queue_ap_read_buf(struct adiv5_ap *ap,
+										uint8_t *buffer, uint32_t size,
+										uint32_t count, uint32_t address)
+{
+	assert(ap->dap->ops != NULL);
+	if (ap->dap->mmap_mode) {
+		return ap->dap->ops->queue_ap_read_buf(ap, buffer, size, count, address);
+	} else {
+		LOG_ERROR("dap_queue_ap_read_buf requires memory mapped access");
+		return ERROR_FAIL;
+	}
+}
+
+static inline int dap_queue_ap_write_buf(struct adiv5_ap *ap,
+										const uint8_t *buffer, uint32_t size,
+										uint32_t count, uint32_t address)
+{
+	assert(ap->dap->ops != NULL);
+	if (ap->dap->mmap_mode) {
+		return ap->dap->ops->queue_ap_write_buf(ap, buffer, size, count, address);
+	} else {
+		LOG_ERROR("dap_queue_ap_write_buf requires memory mapped access");
+		return ERROR_FAIL;
+	}
+}
+
 static inline int dap_dp_read_atomic(struct adiv5_dap *dap, unsigned reg,
 				     uint32_t *value)
 {
@@ -525,6 +573,7 @@ extern int dap_info_command(struct command_context *cmd_ctx,
 extern int dap_register_commands(struct command_context *cmd_ctx);
 extern const char *adiv5_dap_name(struct adiv5_dap *self);
 extern const struct swd_driver *adiv5_dap_swd_driver(struct adiv5_dap *self);
+extern const struct mmap_interface *adiv5_dap_mmap_interface(struct adiv5_dap *self);
 extern int dap_cleanup_all(void);
 
 struct adiv5_private_config {

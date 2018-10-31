@@ -204,12 +204,36 @@ static int cortex_a_init_debug_access(struct target *target)
 	struct armv7a_common *armv7a = target_to_armv7a(target);
 	int retval;
 
-	/* lock memory-mapped access to debug registers to prevent
-	 * software interference */
-	retval = mem_ap_write_u32(armv7a->debug_ap,
-			armv7a->debug_base + CPUDBG_LOCKACCESS, 0);
-	if (retval != ERROR_OK)
-		return retval;
+	/* If not used lock memory-mapped access to debug registers to
+	 * prevent software interference. */
+	if (!armv7a->debug_ap->dap->mmap_mode) {
+		retval = mem_ap_write_u32(armv7a->debug_ap,
+								  armv7a->debug_base + CPUDBG_LOCKACCESS, 0);
+		if (retval != ERROR_OK)
+			LOG_WARNING("Failed to write to the lock access register. Debug interface may be unlocked for memory mapped accesses.");
+			return retval;
+	} else {
+		/* TODO: Failure here should halt progress as the mmap transport cannot work
+		 * without this. */
+		uint32_t lock_status;
+		retval = mem_ap_write_u32(armv7a->debug_ap,
+								  armv7a->debug_base + CPUDBG_LOCKACCESS, 0xC5ACCE55);
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to write to lock access for memory-mapped access to debug registers");
+			return retval;
+		}
+		retval = mem_ap_read_u32(armv7a->debug_ap,
+								 armv7a->debug_base + CPUDBG_LOCKSTATUS, &lock_status);
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to read lock status for memory-mapped access to debug registers");
+			return retval;
+		}
+		if ((lock_status & 0x7) != 0x1) {
+			LOG_ERROR("Couldn't unlock memory-mapped access to debug registers: lock_status 0x%08x",
+					  lock_status);
+			return ERROR_FAIL;
+		}
+	}
 
 	/* Disable cacheline fills and force cache write-through in debug state */
 	retval = mem_ap_write_u32(armv7a->debug_ap,
@@ -2190,30 +2214,34 @@ static int cortex_a_write_cpu_memory_slow(struct target *target,
 static int cortex_a_write_cpu_memory_fast(struct target *target,
 	uint32_t count, const uint8_t *buffer, uint32_t *dscr)
 {
-	/* Writes count objects of size 4 from *buffer. Old value of DSCR must be
-	 * in *dscr; updated to new value. This is fast but only works for
-	 * word-sized objects at aligned addresses.
-	 * Preconditions:
-	 * - Address is in R0 and must be a multiple of 4.
-	 * - R0 is marked dirty.
-	 */
 	struct armv7a_common *armv7a = target_to_armv7a(target);
-	int retval;
+	if (armv7a->debug_ap->use_mem_ap_regs) {
+		/* Writes count objects of size 4 from *buffer. Old value of DSCR must be
+		 * in *dscr; updated to new value. This is fast but only works for
+		 * word-sized objects at aligned addresses.
+		 * Preconditions:
+		 * - Address is in R0 and must be a multiple of 4.
+		 * - R0 is marked dirty.
+		 */
+		int retval;
 
-	/* Switch to fast mode if not already in that mode. */
-	retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_FAST_MODE, dscr);
-	if (retval != ERROR_OK)
-		return retval;
+		/* Switch to fast mode if not already in that mode. */
+		retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_FAST_MODE, dscr);
+		if (retval != ERROR_OK)
+			return retval;
 
-	/* Latch STC instruction. */
-	retval = mem_ap_write_atomic_u32(armv7a->debug_ap,
-			armv7a->debug_base + CPUDBG_ITR, ARMV4_5_STC(0, 1, 0, 1, 14, 5, 0, 4));
-	if (retval != ERROR_OK)
-		return retval;
+		/* Latch STC instruction. */
+		retval = mem_ap_write_atomic_u32(armv7a->debug_ap,
+										 armv7a->debug_base + CPUDBG_ITR, ARMV4_5_STC(0, 1, 0, 1, 14, 5, 0, 4));
+		if (retval != ERROR_OK)
+			return retval;
 
-	/* Transfer all the data and issue all the instructions. */
-	return mem_ap_write_buf_noincr(armv7a->debug_ap, buffer,
-			4, count, armv7a->debug_base + CPUDBG_DTRRX);
+		/* Transfer all the data and issue all the instructions. */
+		return mem_ap_write_buf_noincr(armv7a->debug_ap, buffer,
+									   4, count, armv7a->debug_base + CPUDBG_DTRRX);
+	} else {
+		return cortex_a_write_cpu_memory_slow(target, 4, count, buffer, dscr);
+	}
 }
 
 static int cortex_a_write_cpu_memory(struct target *target,
@@ -2434,86 +2462,90 @@ static int cortex_a_read_cpu_memory_slow(struct target *target,
 static int cortex_a_read_cpu_memory_fast(struct target *target,
 	uint32_t count, uint8_t *buffer, uint32_t *dscr)
 {
-	/* Reads count objects of size 4 into *buffer. Old value of DSCR must be in
-	 * *dscr; updated to new value. This is fast but only works for word-sized
-	 * objects at aligned addresses.
-	 * Preconditions:
-	 * - Address is in R0 and must be a multiple of 4.
-	 * - R0 is marked dirty.
-	 */
 	struct armv7a_common *armv7a = target_to_armv7a(target);
-	uint32_t u32;
-	int retval;
-
-	/* Switch to non-blocking mode if not already in that mode. */
-	retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_NON_BLOCKING, dscr);
-	if (retval != ERROR_OK)
-		return retval;
-
-	/* Issue the LDC instruction via a write to ITR. */
-	retval = cortex_a_exec_opcode(target, ARMV4_5_LDC(0, 1, 0, 1, 14, 5, 0, 4), dscr);
-	if (retval != ERROR_OK)
-		return retval;
-
-	count--;
-
-	if (count > 0) {
-		/* Switch to fast mode if not already in that mode. */
-		retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_FAST_MODE, dscr);
-		if (retval != ERROR_OK)
-			return retval;
-
-		/* Latch LDC instruction. */
-		retval = mem_ap_write_atomic_u32(armv7a->debug_ap,
-				armv7a->debug_base + CPUDBG_ITR, ARMV4_5_LDC(0, 1, 0, 1, 14, 5, 0, 4));
-		if (retval != ERROR_OK)
-			return retval;
-
-		/* Read the value transferred to DTRTX into the buffer. Due to fast
-		 * mode rules, this blocks until the instruction finishes executing and
-		 * then reissues the read instruction to read the next word from
-		 * memory. The last read of DTRTX in this call reads the second-to-last
-		 * word from memory and issues the read instruction for the last word.
+	if (armv7a->debug_ap->use_mem_ap_regs) {
+		/* Reads count objects of size 4 into *buffer. Old value of DSCR must be in
+		 * *dscr; updated to new value. This is fast but only works for word-sized
+		 * objects at aligned addresses.
+		 * Preconditions:
+		 * - Address is in R0 and must be a multiple of 4.
+		 * - R0 is marked dirty.
 		 */
-		retval = mem_ap_read_buf_noincr(armv7a->debug_ap, buffer,
-				4, count, armv7a->debug_base + CPUDBG_DTRTX);
+		uint32_t u32;
+		int retval;
+
+		/* Switch to non-blocking mode if not already in that mode. */
+		retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_NON_BLOCKING, dscr);
 		if (retval != ERROR_OK)
 			return retval;
 
-		/* Advance. */
-		buffer += count * 4;
+		/* Issue the LDC instruction via a write to ITR. */
+		retval = cortex_a_exec_opcode(target, ARMV4_5_LDC(0, 1, 0, 1, 14, 5, 0, 4), dscr);
+		if (retval != ERROR_OK)
+			return retval;
+
+		count--;
+
+		if (count > 0) {
+			/* Switch to fast mode if not already in that mode. */
+			retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_FAST_MODE, dscr);
+			if (retval != ERROR_OK)
+				return retval;
+
+			/* Latch LDC instruction. */
+			retval = mem_ap_write_atomic_u32(armv7a->debug_ap,
+											 armv7a->debug_base + CPUDBG_ITR, ARMV4_5_LDC(0, 1, 0, 1, 14, 5, 0, 4));
+			if (retval != ERROR_OK)
+				return retval;
+
+			/* Read the value transferred to DTRTX into the buffer. Due to fast
+			 * mode rules, this blocks until the instruction finishes executing and
+			 * then reissues the read instruction to read the next word from
+			 * memory. The last read of DTRTX in this call reads the second-to-last
+			 * word from memory and issues the read instruction for the last word.
+			 */
+			retval = mem_ap_read_buf_noincr(armv7a->debug_ap, buffer,
+											4, count, armv7a->debug_base + CPUDBG_DTRTX);
+			if (retval != ERROR_OK)
+				return retval;
+
+			/* Advance. */
+			buffer += count * 4;
+		}
+
+		/* Wait for last issued instruction to complete. */
+		retval = cortex_a_wait_instrcmpl(target, dscr, false);
+		if (retval != ERROR_OK)
+			return retval;
+
+		/* Switch to non-blocking mode if not already in that mode. */
+		retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_NON_BLOCKING, dscr);
+		if (retval != ERROR_OK)
+			return retval;
+
+		/* Check for faults and return early. */
+		if (*dscr & (DSCR_STICKY_ABORT_PRECISE | DSCR_STICKY_ABORT_IMPRECISE))
+			return ERROR_OK; /* A data fault is not considered a system failure. */
+
+		/* Wait until DTRTX is full (according to ARMv7-A/-R architecture manual
+		 * section C8.4.3, checking InstrCmpl_l is not sufficient; one must also
+		 * check TXfull_l). Most of the time this will be free because TXfull_l
+		 * will be set immediately and cached in dscr. */
+		retval = cortex_a_wait_dscr_bits(target, DSCR_DTRTX_FULL_LATCHED,
+										 DSCR_DTRTX_FULL_LATCHED, dscr);
+		if (retval != ERROR_OK)
+			return retval;
+
+		/* Read the value transferred to DTRTX into the buffer. This is the last
+		 * word. */
+		retval = mem_ap_read_atomic_u32(armv7a->debug_ap,
+										armv7a->debug_base + CPUDBG_DTRTX, &u32);
+		if (retval != ERROR_OK)
+			return retval;
+		target_buffer_set_u32(target, buffer, u32);
+	} else {
+		return cortex_a_read_cpu_memory_slow(target, 4, count, buffer, dscr);
 	}
-
-	/* Wait for last issued instruction to complete. */
-	retval = cortex_a_wait_instrcmpl(target, dscr, false);
-	if (retval != ERROR_OK)
-		return retval;
-
-	/* Switch to non-blocking mode if not already in that mode. */
-	retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_NON_BLOCKING, dscr);
-	if (retval != ERROR_OK)
-		return retval;
-
-	/* Check for faults and return early. */
-	if (*dscr & (DSCR_STICKY_ABORT_PRECISE | DSCR_STICKY_ABORT_IMPRECISE))
-		return ERROR_OK; /* A data fault is not considered a system failure. */
-
-	/* Wait until DTRTX is full (according to ARMv7-A/-R architecture manual
-	 * section C8.4.3, checking InstrCmpl_l is not sufficient; one must also
-	 * check TXfull_l). Most of the time this will be free because TXfull_l
-	 * will be set immediately and cached in dscr. */
-	retval = cortex_a_wait_dscr_bits(target, DSCR_DTRTX_FULL_LATCHED,
-			DSCR_DTRTX_FULL_LATCHED, dscr);
-	if (retval != ERROR_OK)
-		return retval;
-
-	/* Read the value transferred to DTRTX into the buffer. This is the last
-	 * word. */
-	retval = mem_ap_read_atomic_u32(armv7a->debug_ap,
-			armv7a->debug_base + CPUDBG_DTRTX, &u32);
-	if (retval != ERROR_OK)
-		return retval;
-	target_buffer_set_u32(target, buffer, u32);
 
 	return ERROR_OK;
 }

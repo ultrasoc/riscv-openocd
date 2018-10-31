@@ -7,8 +7,16 @@
 #include <transport/transport.h>
 #include <jtag/interface.h>
 
-/* BRH: TODO: Any extra commands? */
 static const struct command_registration mmap_commands[] = {
+	{
+		/* For now just setup mmap target as JTAG ignoring
+		 * anything JTAG-specific
+		 */
+		.name = "newdap",
+		.jim_handler = jim_jtag_newtap,
+		.mode = COMMAND_CONFIG,
+		.help = "declare a new mmap DAP"
+	},
 	COMMAND_REGISTRATION_DONE
 };
 
@@ -24,7 +32,8 @@ static const struct command_registration mmap_handlers[] = {
 
 static int mmap_select(struct command_context *ctx)
 {
-	/* FIXME: only place where global 'jtag_interface' is still needed */
+	/* FIXME: only place where global 'jtag_interface' is still needed. */
+	/* This is a general openocd problem with non-jtag transports. */
 	extern struct jtag_interface *jtag_interface;
 	const struct mmap_interface *mmap = jtag_interface->mmap;
 	int retval;
@@ -43,7 +52,7 @@ static int mmap_select(struct command_context *ctx)
 
 static int mmap_init(struct command_context *ctx)
 {
-	/* BRH: TODO */
+	/* Nothing to do */
 	return ERROR_OK;
 }
 
@@ -66,3 +75,4 @@ bool transport_is_mmap(void)
 {
 	return get_current_transport() == &mmap_transport;
 }
+

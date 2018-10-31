@@ -95,6 +95,7 @@ ARM_DEBUG_SRC = \
 	%D%/armv7a_cache_l2x.c \
 	%D%/adi_v5_jtag.c \
 	%D%/adi_v5_swd.c \
+	%D%/adi_v5_mmap.c \
 	%D%/embeddedice.c \
 	%D%/trace.c \
 	%D%/etb.c \

@@ -175,6 +175,11 @@ proc using_hla {} {
 	expr { [ string first "hla" $_TRANSPORT ] != -1 }
 }
 
+proc using_mmap {} {
+    set _TRANSPORT [ transport select ]
+	expr { [ string first "mmap" $_TRANSPORT ] != -1 }
+}
+
 #########
 
 # Temporary migration aid.  May be removed starting in January 2011.

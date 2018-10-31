@@ -34,6 +34,7 @@ static LIST_HEAD(all_dap);
 
 extern const struct dap_ops swd_dap_ops;
 extern const struct dap_ops jtag_dp_ops;
+extern const struct dap_ops mmap_dap_ops;
 extern struct jtag_interface *jtag_interface;
 
 /* DAP command support */
@@ -42,6 +43,7 @@ struct arm_dap_object {
 	struct adiv5_dap dap;
 	char *name;
 	const struct swd_driver *swd;
+	const struct mmap_interface *mmap;
 };
 
 static void dap_instance_init(struct adiv5_dap *dap)
@@ -71,6 +73,12 @@ const struct swd_driver *adiv5_dap_swd_driver(struct adiv5_dap *self)
 {
 	struct arm_dap_object *obj = container_of(self, struct arm_dap_object, dap);
 	return obj->swd;
+}
+
+const struct mmap_interface *adiv5_dap_mmap_interface(struct adiv5_dap *self)
+{
+	struct arm_dap_object *obj = container_of(self, struct arm_dap_object, dap);
+	return obj->mmap;
 }
 
 struct adiv5_dap *adiv5_get_dap(struct arm_dap_object *obj)
@@ -115,12 +123,10 @@ static int dap_init_all(void)
 		if (!dap->tap->enabled)
 			continue;
 
-		/* BRH */
 		if (transport_is_mmap()) {
-			return 0; /* BRH: TODO */
-		}
-
-		if (transport_is_swd()) {
+			dap->ops = &mmap_dap_ops;
+			obj->mmap = jtag_interface->mmap;
+		} else if (transport_is_swd()) {
 			dap->ops = &swd_dap_ops;
 			obj->swd = jtag_interface->swd;
 		} else
