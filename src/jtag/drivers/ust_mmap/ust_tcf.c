@@ -7,7 +7,6 @@
 #include <windows.h>
 #include <process.h>
 #include <ws2tcpip.h>
-#pragma comment(lib, "Ws2_32.lib")
 #define close closesocket
 #else
 #include <sys/types.h>
@@ -204,8 +203,8 @@ static int do_recv(int skt, char *buffer, size_t len) {
 		int recv_len = recv(skt, buffer + length, remaining, 0);
 		if (recv_len <= 0) {
 			/* Check the errno */
-			LOG_ERROR("recv failed len: %d errno %d %s %d",
-					  recv_len, errno, strerror(errno), WSAGetLastError());
+			LOG_ERROR("recv failed len: %d errno %d %s",
+					  recv_len, errno, strerror(errno));
 			return ERROR_FAIL;
 		}
 		remaining -= recv_len;
