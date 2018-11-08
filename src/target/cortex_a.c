@@ -1923,7 +1923,7 @@ static int cortex_a_set_watchpoint(struct target *target, struct watchpoint *wat
 	uint32_t control;
 	uint8_t address_mask = ilog2(watchpoint->length);
 	uint8_t byte_address_select = 0xFF;
-	uint8_t load_store_access_control = 0x3;
+	uint8_t load_store_access_control;
 	struct cortex_a_common *cortex_a = target_to_cortex_a(target);
 	struct armv7a_common *armv7a = &cortex_a->armv7a_common;
 	struct cortex_a_wrp *wrp_list = cortex_a->wrp_list;
@@ -1942,8 +1942,27 @@ static int cortex_a_set_watchpoint(struct target *target, struct watchpoint *wat
 		return ERROR_FAIL;
 	}
 
-	if (address_mask == 0x1 || address_mask == 0x2) {
-		LOG_WARNING("length must be a power of 2 and different than 2 and 4");
+	/* TODO: Use byte select to allow smaller lengths */
+	if (address_mask == 0x1) {
+		LOG_WARNING("Watchpoint length must be a power of 2 and at least 4. (%d)",
+					watchpoint->length);
+		return ERROR_FAIL;
+	} else if (address_mask == 0x2) {
+		address_mask = 0;
+	}
+
+	switch (watchpoint->rw) {
+	case WPT_READ:
+		load_store_access_control = 0x1;
+		break;
+	case WPT_WRITE:
+		load_store_access_control = 0x2;
+		break;
+	case WPT_ACCESS:
+		load_store_access_control = 0x3;
+		break;
+	default:
+		LOG_ERROR("Unknown watchpoint type (%d)", watchpoint->rw);
 		return ERROR_FAIL;
 	}
 
@@ -2060,6 +2079,24 @@ int cortex_a_remove_watchpoint(struct target *target, struct watchpoint *watchpo
 	return ERROR_OK;
 }
 
+int cortex_a_hit_watchpoint(struct target *target, struct watchpoint **hit_watchpoint)
+{
+	struct watchpoint *wp;
+
+	/* TODO: Currently assuming their is just one watchpoint so
+	 * we can report the data address. */
+	/* There may be more watchpoints!! */
+	*hit_watchpoint = target->watchpoints;
+	for (wp = target->watchpoints; wp; wp = wp->next) {
+		if (wp->set) {
+			*hit_watchpoint = wp;
+			return ERROR_OK;
+		}
+	}
+
+	LOG_ERROR("Hit watchpoint but no watchpoint known about.");
+	return ERROR_FAIL;
+}
 
 /*
  * Cortex-A Reset functions
@@ -3300,8 +3337,15 @@ static int cortex_a_examine_first(struct target *target)
 	LOG_DEBUG("Configured %i hw breakpoints", cortex_a->brp_num);
 
 	/* Setup Watchpoint Register Pairs */
-	cortex_a->wrp_num = ((didr >> 28) & 0x0F) + 1;
-	cortex_a->wrp_num_available = cortex_a->brp_num;
+	cortex_a->wrp_num = 1;
+	/* TODO: How to work out the data address that triggered the
+	 * watchpoint without just deducing it from just having one
+	 * watchpoint on a single word.*/
+	LOG_WARNING("Only allowing %d watchpoints but the hardware has %d.\n"
+	"This way the data address can be reported to the debugger.",
+				cortex_a->wrp_num,
+				((didr >> 28) & 0x0F) + 1);
+	cortex_a->wrp_num_available = cortex_a->wrp_num;
 	free(cortex_a->wrp_list);
 	cortex_a->wrp_list = calloc(cortex_a->wrp_num, sizeof(struct cortex_a_wrp));
 	for (i = 0; i < cortex_a->wrp_num; i++) {
@@ -3699,6 +3743,7 @@ struct target_type cortexa_target = {
 	.remove_breakpoint = cortex_a_remove_breakpoint,
 	.add_watchpoint = cortex_a_add_watchpoint,
 	.remove_watchpoint = cortex_a_remove_watchpoint,
+	.hit_watchpoint = cortex_a_hit_watchpoint,
 
 	.commands = cortex_a_command_handlers,
 	.target_create = cortex_a_target_create,
@@ -3775,6 +3820,7 @@ struct target_type cortexr4_target = {
 	.remove_breakpoint = cortex_a_remove_breakpoint,
 	.add_watchpoint = cortex_a_add_watchpoint,
 	.remove_watchpoint = cortex_a_remove_watchpoint,
+	.hit_watchpoint = cortex_a_hit_watchpoint,
 
 	.commands = cortex_r4_command_handlers,
 	.target_create = cortex_r4_target_create,
