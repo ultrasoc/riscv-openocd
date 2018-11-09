@@ -86,6 +86,8 @@ static int cortex_a_virt2phys(struct target *target,
 	target_addr_t virt, target_addr_t *phys);
 static int cortex_a_read_cpu_memory(struct target *target,
 	uint32_t address, uint32_t size, uint32_t count, uint8_t *buffer);
+static int cortex_a_step(struct target *target, int current, target_addr_t address,
+	int handle_breakpoints);
 
 static unsigned int ilog2(unsigned int x)
 {
@@ -1389,8 +1391,8 @@ int cortex_a_set_dscr_bits(struct target *target, unsigned long bit_mask, unsign
 	return retval;
 }
 
-static int cortex_a_step(struct target *target, int current, target_addr_t address,
-	int handle_breakpoints)
+static int cortex_a_step_internal(struct target *target, int current, target_addr_t address,
+	int handle_breakpoints, int debug_execution)
 {
 	struct cortex_a_common *cortex_a = target_to_cortex_a(target);
 	struct armv7a_common *armv7a = target_to_armv7a(target);
@@ -1398,6 +1400,8 @@ static int cortex_a_step(struct target *target, int current, target_addr_t addre
 	struct breakpoint *breakpoint = NULL;
 	struct breakpoint stepbreakpoint;
 	struct reg *r;
+	int wrp_i = 0;
+	struct cortex_a_wrp *wrp_list = cortex_a->wrp_list;
 	int retval;
 
 	if (target->state != TARGET_HALTED) {
@@ -1423,6 +1427,20 @@ static int cortex_a_step(struct target *target, int current, target_addr_t addre
 			cortex_a_unset_breakpoint(target, breakpoint);
 	}
 
+	/* Disable watchpoints */
+	for (wrp_i = 0; wrp_i < cortex_a->wrp_num; wrp_i++) {
+		if (wrp_list[wrp_i].used) {
+			retval = cortex_a_dap_write_memap_register_u32(
+				target,
+				armv7a->debug_base + CPUDBG_WCR_BASE + 4 * wrp_list[wrp_i].WRPn,
+				wrp_list[wrp_i].control & ~1);
+		}
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to disable watchpoints");
+			return retval;
+		}
+	}
+
 	/* Setup single step breakpoint */
 	stepbreakpoint.address = address;
 	stepbreakpoint.length = (arm->core_state == ARM_STATE_THUMB)
@@ -1442,7 +1460,7 @@ static int cortex_a_step(struct target *target, int current, target_addr_t addre
 
 	target->debug_reason = DBG_REASON_SINGLESTEP;
 
-	retval = cortex_a_resume(target, 1, address, 0, 0);
+	retval = cortex_a_resume(target, 1, address, 0, debug_execution);
 	if (retval != ERROR_OK)
 		return retval;
 
@@ -1469,6 +1487,20 @@ static int cortex_a_step(struct target *target, int current, target_addr_t addre
 
 	target->debug_reason = DBG_REASON_BREAKPOINT;
 
+	/* Re-enable the watchpoints */
+	for (wrp_i = 0; wrp_i < cortex_a->wrp_num; wrp_i++) {
+		if (wrp_list[wrp_i].used) {
+			retval = cortex_a_dap_write_memap_register_u32(
+				target,
+				armv7a->debug_base + CPUDBG_WCR_BASE + 4 * wrp_list[wrp_i].WRPn,
+				wrp_list[wrp_i].control);
+		}
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to re-enable watchpoints");
+			return retval;
+		}
+	}
+
 	if (breakpoint)
 		cortex_a_set_breakpoint(target, breakpoint, 0);
 
@@ -1476,6 +1508,13 @@ static int cortex_a_step(struct target *target, int current, target_addr_t addre
 		LOG_DEBUG("target stepped");
 
 	return ERROR_OK;
+}
+
+static int cortex_a_step(struct target *target, int current, target_addr_t address,
+	int handle_breakpoints)
+{
+	return cortex_a_step_internal(target, current, address,
+								  handle_breakpoints, 0);
 }
 
 static int cortex_a_restore_context(struct target *target, bool bpwp)
@@ -2075,13 +2114,17 @@ int cortex_a_remove_watchpoint(struct target *target, struct watchpoint *watchpo
 	if (watchpoint->set) {
 		cortex_a->wrp_num_available++;
 		cortex_a_unset_watchpoint(target, watchpoint);
+	} else {
+		LOG_WARNING("Attempt to remove unset watchpoint");
 	}
+
 	return ERROR_OK;
 }
 
 int cortex_a_hit_watchpoint(struct target *target, struct watchpoint **hit_watchpoint)
 {
-	struct watchpoint *wp;
+	struct watchpoint *wp = NULL;
+	struct cortex_a_common *cortex_a = target_to_cortex_a(target);
 
 	/* TODO: Currently assuming their is just one watchpoint so
 	 * we can report the data address. */
@@ -2090,8 +2133,15 @@ int cortex_a_hit_watchpoint(struct target *target, struct watchpoint **hit_watch
 	for (wp = target->watchpoints; wp; wp = wp->next) {
 		if (wp->set) {
 			*hit_watchpoint = wp;
-			return ERROR_OK;
+			break;
 		}
+	}
+
+	if (hit_watchpoint) {
+		if (cortex_a->step_watchpoints_mode == CORTEX_A_STEP_WATCHPOINTS_ON) {
+			cortex_a_step_internal(target, 1, 0, 1, 1);
+		}
+		return ERROR_OK;
 	}
 
 	LOG_ERROR("Hit watchpoint but no watchpoint known about.");
@@ -3640,6 +3690,32 @@ COMMAND_HANDLER(handle_cortex_a_dacrfixup_command)
 	return ERROR_OK;
 }
 
+COMMAND_HANDLER(cortex_a_handle_step_watchpoints_command)
+{
+	struct target *target = get_current_target(CMD_CTX);
+	struct cortex_a_common *cortex_a = target_to_cortex_a(target);
+
+	static const Jim_Nvp nvp_step_watchpoints_modes[] = {
+		{ .name = "off", .value = CORTEX_A_STEP_WATCHPOINTS_OFF },
+		{ .name = "on", .value = CORTEX_A_STEP_WATCHPOINTS_ON },
+		{ .name = NULL, .value = -1 },
+	};
+	const Jim_Nvp *n;
+
+	if (CMD_ARGC > 0) {
+		n = Jim_Nvp_name2value_simple(nvp_step_watchpoints_modes, CMD_ARGV[0]);
+		if (n->name == NULL)
+			return ERROR_COMMAND_SYNTAX_ERROR;
+		cortex_a->step_watchpoints_mode = n->value;
+	}
+
+	n = Jim_Nvp_value2name_simple(nvp_step_watchpoints_modes,
+								  cortex_a->step_watchpoints_mode);
+	command_print(CMD_CTX, "cortex_a step watchpoints %s", n->name);
+
+	return ERROR_OK;
+}
+
 static const struct command_registration cortex_a_exec_command_handlers[] = {
 	{
 		.name = "cache_info",
@@ -3687,6 +3763,13 @@ static const struct command_registration cortex_a_exec_command_handlers[] = {
 		.mode = COMMAND_EXEC,
 		.help = "set domain access control (DACR) to all-manager "
 			"on memory access",
+		.usage = "['on'|'off']",
+	},
+	{
+		.name = "step_watchpoints",
+		.handler = cortex_a_handle_step_watchpoints_command,
+		.mode = COMMAND_EXEC,
+		.help = "Set whether to step when a watchpoint is hit",
 		.usage = "['on'|'off']",
 	},
 

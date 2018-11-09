@@ -63,6 +63,11 @@ enum cortex_a_dacrfixup_mode {
 	CORTEX_A_DACRFIXUP_ON
 };
 
+enum cortex_a_step_watchpoints_mode {
+	CORTEX_A_STEP_WATCHPOINTS_OFF,
+	CORTEX_A_STEP_WATCHPOINTS_ON
+};
+
 struct cortex_a_brp {
 	int used;
 	int type;
@@ -111,6 +116,7 @@ struct cortex_a_common {
 
 	enum cortex_a_isrmasking_mode isrmasking_mode;
 	enum cortex_a_dacrfixup_mode dacrfixup_mode;
+	enum cortex_a_step_watchpoints_mode step_watchpoints_mode;
 
 	struct armv7a_common armv7a_common;
 
