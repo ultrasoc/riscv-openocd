@@ -196,6 +196,28 @@ static int aarch64_init_debug_access(struct target *target)
 
 	LOG_DEBUG("%s", target_name(target));
 
+	if (armv8->debug_ap->dap->mmap_mode) {
+		uint32_t lock_status;
+		retval = mem_ap_write_atomic_u32(armv8->debug_ap,
+										 armv8->debug_base + CPUDBG_LOCKACCESS,
+										 0xC5ACCE55);
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to write to debug lock access register");
+			return retval;
+		}
+		retval = mem_ap_read_atomic_u32(armv8->debug_ap,
+										armv8->debug_base + CPUDBG_LOCKSTATUS, &lock_status);
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to read debug lock status register");
+			return retval;
+		}
+		if ((lock_status & 0x7) != 0x1) {
+			LOG_ERROR("Couldn't unlock memory-mapped access to debug registers: lock_status 0x%08x",
+					  lock_status);
+			return ERROR_FAIL;
+		}
+	}
+
 	retval = mem_ap_write_atomic_u32(armv8->debug_ap,
 			armv8->debug_base + CPUV8_DBG_OSLAR, 0);
 	if (retval != ERROR_OK) {
@@ -217,6 +239,24 @@ static int aarch64_init_debug_access(struct target *target)
 	 * Gate all channel trigger events from entering the CTM
 	 */
 
+	if (armv8->debug_ap->dap->mmap_mode) {
+		uint32_t lock_status;
+		retval = arm_cti_write_reg(armv8->cti, CPUDBG_LOCKACCESS, 0xC5ACCE55);
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to write cti lock access register");
+			return retval;
+		}
+		retval = arm_cti_read_reg(armv8->cti, CPUDBG_LOCKSTATUS, &lock_status);
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to read cti lock status register");
+			return retval;
+		}
+		if ((lock_status & 0x7) != 0x1) {
+			LOG_ERROR("Couldn't unlock memory-mapped access to cti registers: lock_status 0x%08x",
+					  lock_status);
+			return ERROR_FAIL;
+		}
+	}
 	/* Enable CTI */
 	retval = arm_cti_enable(armv8->cti, true);
 	/* By default, gate all channel events to and from the CTM */
@@ -2017,33 +2057,37 @@ static int aarch64_write_cpu_memory_fast(struct target *target,
 	uint32_t count, const uint8_t *buffer, uint32_t *dscr)
 {
 	struct armv8_common *armv8 = target_to_armv8(target);
-	struct arm *arm = &armv8->arm;
-	int retval;
+	if (armv8->debug_ap->use_mem_ap_regs) {
+		struct arm *arm = &armv8->arm;
+		int retval;
 
-	armv8_reg_current(arm, 1)->dirty = true;
+		armv8_reg_current(arm, 1)->dirty = true;
 
-	/* Step 1.d   - Change DCC to memory mode */
-	*dscr |= DSCR_MA;
-	retval =  mem_ap_write_atomic_u32(armv8->debug_ap,
-			armv8->debug_base + CPUV8_DBG_DSCR, *dscr);
-	if (retval != ERROR_OK)
-		return retval;
+		/* Step 1.d   - Change DCC to memory mode */
+		*dscr |= DSCR_MA;
+		retval =  mem_ap_write_atomic_u32(armv8->debug_ap,
+										  armv8->debug_base + CPUV8_DBG_DSCR, *dscr);
+		if (retval != ERROR_OK)
+			return retval;
 
 
-	/* Step 2.a   - Do the write */
-	retval = mem_ap_write_buf_noincr(armv8->debug_ap,
-					buffer, 4, count, armv8->debug_base + CPUV8_DBG_DTRRX);
-	if (retval != ERROR_OK)
-		return retval;
+		/* Step 2.a   - Do the write */
+		retval = mem_ap_write_buf_noincr(armv8->debug_ap,
+										 buffer, 4, count, armv8->debug_base + CPUV8_DBG_DTRRX);
+		if (retval != ERROR_OK)
+			return retval;
 
-	/* Step 3.a   - Switch DTR mode back to Normal mode */
-	*dscr &= ~DSCR_MA;
-	retval = mem_ap_write_atomic_u32(armv8->debug_ap,
-				armv8->debug_base + CPUV8_DBG_DSCR, *dscr);
-	if (retval != ERROR_OK)
-		return retval;
+		/* Step 3.a   - Switch DTR mode back to Normal mode */
+		*dscr &= ~DSCR_MA;
+		retval = mem_ap_write_atomic_u32(armv8->debug_ap,
+										 armv8->debug_base + CPUV8_DBG_DSCR, *dscr);
+		if (retval != ERROR_OK)
+			return retval;
 
-	return ERROR_OK;
+		return ERROR_OK;
+	} else {
+		return aarch64_write_cpu_memory_slow(target, 4, count, buffer, dscr);
+	}
 }
 
 static int aarch64_write_cpu_memory(struct target *target,
@@ -2196,69 +2240,73 @@ static int aarch64_read_cpu_memory_fast(struct target *target,
 	uint32_t count, uint8_t *buffer, uint32_t *dscr)
 {
 	struct armv8_common *armv8 = target_to_armv8(target);
-	struct arm_dpm *dpm = &armv8->dpm;
-	struct arm *arm = &armv8->arm;
-	int retval;
-	uint32_t value;
+	if (armv8->debug_ap->use_mem_ap_regs) {
+		struct arm_dpm *dpm = &armv8->dpm;
+		struct arm *arm = &armv8->arm;
+		int retval;
+		uint32_t value;
 
-	/* Mark X1 as dirty */
-	armv8_reg_current(arm, 1)->dirty = true;
+		/* Mark X1 as dirty */
+		armv8_reg_current(arm, 1)->dirty = true;
 
-	if (arm->core_state == ARM_STATE_AARCH64) {
-		/* Step 1.d - Dummy operation to ensure EDSCR.Txfull == 1 */
-		retval = dpm->instr_execute(dpm, ARMV8_MSR_GP(SYSTEM_DBG_DBGDTR_EL0, 0));
-	} else {
-		/* Step 1.d - Dummy operation to ensure EDSCR.Txfull == 1 */
-		retval = dpm->instr_execute(dpm, ARMV4_5_MCR(14, 0, 0, 0, 5, 0));
-	}
+		if (arm->core_state == ARM_STATE_AARCH64) {
+			/* Step 1.d - Dummy operation to ensure EDSCR.Txfull == 1 */
+			retval = dpm->instr_execute(dpm, ARMV8_MSR_GP(SYSTEM_DBG_DBGDTR_EL0, 0));
+		} else {
+			/* Step 1.d - Dummy operation to ensure EDSCR.Txfull == 1 */
+			retval = dpm->instr_execute(dpm, ARMV4_5_MCR(14, 0, 0, 0, 5, 0));
+		}
 
-	if (retval != ERROR_OK)
-		return retval;
-
-	/* Step 1.e - Change DCC to memory mode */
-	*dscr |= DSCR_MA;
-	retval =  mem_ap_write_atomic_u32(armv8->debug_ap,
-			armv8->debug_base + CPUV8_DBG_DSCR, *dscr);
-	if (retval != ERROR_OK)
-		return retval;
-
-	/* Step 1.f - read DBGDTRTX and discard the value */
-	retval = mem_ap_read_atomic_u32(armv8->debug_ap,
-			armv8->debug_base + CPUV8_DBG_DTRTX, &value);
-	if (retval != ERROR_OK)
-		return retval;
-
-	count--;
-	/* Read the data - Each read of the DTRTX register causes the instruction to be reissued
-	 * Abort flags are sticky, so can be read at end of transactions
-	 *
-	 * This data is read in aligned to 32 bit boundary.
-	 */
-
-	if (count) {
-		/* Step 2.a - Loop n-1 times, each read of DBGDTRTX reads the data from [X0] and
-		 * increments X0 by 4. */
-		retval = mem_ap_read_buf_noincr(armv8->debug_ap, buffer, 4, count,
-									armv8->debug_base + CPUV8_DBG_DTRTX);
 		if (retval != ERROR_OK)
 			return retval;
+
+		/* Step 1.e - Change DCC to memory mode */
+		*dscr |= DSCR_MA;
+		retval =  mem_ap_write_atomic_u32(armv8->debug_ap,
+										  armv8->debug_base + CPUV8_DBG_DSCR, *dscr);
+		if (retval != ERROR_OK)
+			return retval;
+
+		/* Step 1.f - read DBGDTRTX and discard the value */
+		retval = mem_ap_read_atomic_u32(armv8->debug_ap,
+										armv8->debug_base + CPUV8_DBG_DTRTX, &value);
+		if (retval != ERROR_OK)
+			return retval;
+
+		count--;
+		/* Read the data - Each read of the DTRTX register causes the instruction to be reissued
+		 * Abort flags are sticky, so can be read at end of transactions
+		 *
+		 * This data is read in aligned to 32 bit boundary.
+		 */
+
+		if (count) {
+			/* Step 2.a - Loop n-1 times, each read of DBGDTRTX reads the data from [X0] and
+			 * increments X0 by 4. */
+			retval = mem_ap_read_buf_noincr(armv8->debug_ap, buffer, 4, count,
+											armv8->debug_base + CPUV8_DBG_DTRTX);
+			if (retval != ERROR_OK)
+				return retval;
+		}
+
+		/* Step 3.a - set DTR access mode back to Normal mode	*/
+		*dscr &= ~DSCR_MA;
+		retval =  mem_ap_write_atomic_u32(armv8->debug_ap,
+										  armv8->debug_base + CPUV8_DBG_DSCR, *dscr);
+		if (retval != ERROR_OK)
+			return retval;
+
+		/* Step 3.b - read DBGDTRTX for the final value */
+		retval = mem_ap_read_atomic_u32(armv8->debug_ap,
+										armv8->debug_base + CPUV8_DBG_DTRTX, &value);
+		if (retval != ERROR_OK)
+			return retval;
+
+		target_buffer_set_u32(target, buffer + count * 4, value);
+		return retval;
+	} else {
+		return aarch64_read_cpu_memory_slow(target, 4, count, buffer, dscr);
 	}
-
-	/* Step 3.a - set DTR access mode back to Normal mode	*/
-	*dscr &= ~DSCR_MA;
-	retval =  mem_ap_write_atomic_u32(armv8->debug_ap,
-					armv8->debug_base + CPUV8_DBG_DSCR, *dscr);
-	if (retval != ERROR_OK)
-		return retval;
-
-	/* Step 3.b - read DBGDTRTX for the final value */
-	retval = mem_ap_read_atomic_u32(armv8->debug_ap,
-			armv8->debug_base + CPUV8_DBG_DTRTX, &value);
-	if (retval != ERROR_OK)
-		return retval;
-
-	target_buffer_set_u32(target, buffer + count * 4, value);
-	return retval;
 }
 
 static int aarch64_read_cpu_memory(struct target *target,
