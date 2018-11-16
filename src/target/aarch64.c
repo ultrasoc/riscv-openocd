@@ -33,6 +33,7 @@
 enum restart_mode {
 	RESTART_LAZY,
 	RESTART_SYNC,
+	RESTART_LAZY_DEBUG,
 };
 
 enum halt_mode {
@@ -257,8 +258,6 @@ static int aarch64_dpm_setup(struct aarch64_common *a8, uint64_t debug)
 	dpm->didr = debug;
 
 	retval = armv8_dpm_setup(dpm);
-	if (retval == ERROR_OK)
-		retval = armv8_dpm_initialize(dpm);
 
 	return retval;
 }
@@ -693,7 +692,11 @@ static int aarch64_do_restart_one(struct target *target, enum restart_mode mode)
 		return retval;
 
 	target->debug_reason = DBG_REASON_NOTHALTED;
-	target->state = TARGET_RUNNING;
+	if (mode == RESTART_SYNC || mode == RESTART_LAZY) {
+		target->state = TARGET_RUNNING;
+	} else {
+		target->state = TARGET_DEBUG_RUNNING;
+	}
 
 	return ERROR_OK;
 }
@@ -966,23 +969,6 @@ static int aarch64_debug_entry(struct target *target)
 
 	/* save address of instruction that triggered the watchpoint? */
 	if (target->debug_reason == DBG_REASON_WATCHPOINT) {
-		uint32_t tmp;
-		uint64_t wfar = 0;
-
-		retval = mem_ap_read_atomic_u32(armv8->debug_ap,
-				armv8->debug_base + CPUV8_DBG_WFAR1,
-				&tmp);
-		if (retval != ERROR_OK)
-			return retval;
-		wfar = tmp;
-		wfar = (wfar << 32);
-		retval = mem_ap_read_atomic_u32(armv8->debug_ap,
-				armv8->debug_base + CPUV8_DBG_WFAR0,
-				&tmp);
-		if (retval != ERROR_OK)
-			return retval;
-		wfar |= tmp;
-		armv8_dpm_report_wfar(&armv8->dpm, wfar);
 	}
 
 	retval = armv8_dpm_read_current_registers(&armv8->dpm);
@@ -1060,14 +1046,16 @@ static int aarch64_post_debug_entry(struct target *target)
 /*
  * single-step a target
  */
-static int aarch64_step(struct target *target, int current, target_addr_t address,
-	int handle_breakpoints)
+static int aarch64_step_internal(struct target *target, int current, target_addr_t address,
+	int handle_breakpoints, int debug_execution) 
 {
 	struct armv8_common *armv8 = target_to_armv8(target);
 	struct aarch64_common *aarch64 = target_to_aarch64(target);
 	int saved_retval = ERROR_OK;
 	int retval;
 	uint32_t edecr;
+	int wrp_i = 0;
+	struct aarch64_brp *wrp_list = aarch64->wp_list;
 
 	if (target->state != TARGET_HALTED) {
 		LOG_WARNING("target not halted");
@@ -1091,6 +1079,20 @@ static int aarch64_step(struct target *target, int current, target_addr_t addres
 	if (retval != ERROR_OK)
 		return retval;
 
+	/* Disable watchpoints */
+	for (wrp_i = 0; wrp_i < aarch64->wp_num; wrp_i++) {
+		if (wrp_list[wrp_i].used) {
+			retval = aarch64_dap_write_memap_register_u32(
+				target,
+				armv8->debug_base + CPUV8_DBG_WCR_BASE + 4 * wrp_list[wrp_i].BRPn,
+				wrp_list[wrp_i].control & ~1);
+		}
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to disable watchpoints");
+			return retval;
+		}
+	}
+
 	if (target->smp && (current == 1)) {
 		/*
 		 * isolate current target so that it doesn't get resumed
@@ -1108,9 +1110,10 @@ static int aarch64_step(struct target *target, int current, target_addr_t addres
 	}
 
 	/* all other targets running, restore and restart the current target */
-	retval = aarch64_restore_one(target, current, &address, 0, 0);
+	retval = aarch64_restore_one(target, current, &address, 0, debug_execution);
 	if (retval == ERROR_OK)
-		retval = aarch64_restart_one(target, RESTART_LAZY);
+		retval = aarch64_restart_one(target,
+					debug_execution ? RESTART_LAZY_DEBUG : RESTART_LAZY);
 
 	if (retval != ERROR_OK)
 		return retval;
@@ -1159,10 +1162,30 @@ static int aarch64_step(struct target *target, int current, target_addr_t addres
 			return ERROR_OK;
 	}
 
+	/* Re-enable the watchpoints */
+	for (wrp_i = 0; wrp_i < aarch64->wp_num; wrp_i++) {
+		if (wrp_list[wrp_i].used) {
+			retval = aarch64_dap_write_memap_register_u32(
+				target,
+				armv8->debug_base + CPUV8_DBG_WCR_BASE + 4 * wrp_list[wrp_i].BRPn,
+				wrp_list[wrp_i].control);
+		}
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to re-enable watchpoints");
+			return retval;
+		}
+	}
+
 	if (saved_retval != ERROR_OK)
 		return saved_retval;
 
 	return aarch64_poll(target);
+}
+
+static int aarch64_step(struct target *target, int current, target_addr_t address,
+	int handle_breakpoints)
+{
+	return aarch64_step_internal(target, current, address,  handle_breakpoints, 0);
 }
 
 static int aarch64_restore_context(struct target *target, bool bpwp)
@@ -1635,7 +1658,9 @@ static int aarch64_set_watchpoint(struct target *target,
 {
 	int retval;
 	int wp_i = 0;
-	uint32_t control, offset, length;
+	uint32_t control;
+	uint8_t address_mask;
+	uint8_t byte_address_select;
 	struct aarch64_common *aarch64 = target_to_aarch64(target);
 	struct armv8_common *armv8 = &aarch64->armv8_common;
 	struct aarch64_brp *wp_list = aarch64->wp_list;
@@ -1651,10 +1676,10 @@ static int aarch64_set_watchpoint(struct target *target,
 		LOG_ERROR("ERROR Can not find free Watchpoint Register Pair");
 			return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 	}
-	watchpoint->set = wp_i + 1;
 
 	control = (1 << 0)      /* enable */
-		| (3 << 1);     /* both user and privileged access */
+		| (3 << 1)     /* both user and privileged access */
+		| (1 << 13);   /* HMC */
 
 	switch (watchpoint->rw) {
 	case WPT_READ:
@@ -1668,39 +1693,58 @@ static int aarch64_set_watchpoint(struct target *target,
 		break;
 	}
 
-	/* Match up to 8 bytes. */
-	offset = watchpoint->address & 3;
-	length = watchpoint->length;
-	if (offset + length >= sizeof(uint64_t))
-		length = sizeof(uint64_t) - offset;
-	for (; length > 0; offset++, length--) {
-		control |= (1 << offset) << 5;
-		offset++;
+	if (watchpoint->length == 4) {
+		address_mask = 0;
+		byte_address_select = 0x0F;
+	} else if (watchpoint->length == 8) {
+		address_mask = 0;
+		byte_address_select = 0xFF;
+	} else {
+		LOG_ERROR("Watchpoint length must be 4 or 8. (%d)", watchpoint->length);
+		return ERROR_FAIL;
 	}
+
+	if (watchpoint->address & 0x3) {
+		LOG_ERROR("Watchpoint address must be 4 byte aligned. 0x%"
+				  TARGET_PRIxADDR, watchpoint->address);
+		return ERROR_FAIL;
+	}
+
+	control |= (byte_address_select << 5);
+	control |= (address_mask << 24);
 
 	wp_list[wp_i].used = 1;
 	wp_list[wp_i].value = watchpoint->address & 0xFFFFFFFFFFFFFFFC;
 	wp_list[wp_i].control = control;
 
+	watchpoint->set = wp_i + 1;
+
 	retval = aarch64_dap_write_memap_register_u32(target, armv8->debug_base
 			+ CPUV8_DBG_WVR_BASE + 16 * wp_list[wp_i].BRPn,
 			(uint32_t)(wp_list[wp_i].value & 0xFFFFFFFF));
-	if (retval != ERROR_OK)
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Failed to write watchpoint lower value register");
 		return retval;
+	}
 	retval = aarch64_dap_write_memap_register_u32(target, armv8->debug_base
 			+ CPUV8_DBG_WVR_BASE + 4 + 16 * wp_list[wp_i].BRPn,
 			(uint32_t)(wp_list[wp_i].value >> 32));
-	if (retval != ERROR_OK)
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Failed to write watchpoint upper value register");
 		return retval;
+	}
 
 	retval = aarch64_dap_write_memap_register_u32(target, armv8->debug_base
 			+ CPUV8_DBG_WCR_BASE + 16 * wp_list[wp_i].BRPn,
 			control);
-	if (retval != ERROR_OK)
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Failed to write watchpoint control register");
 		return retval;
+	}
+
 	LOG_DEBUG("wp %i control 0x%0" PRIx32 " value 0x%" TARGET_PRIxADDR, wp_i,
 		wp_list[wp_i].control,
-		wp_list[wp_i].value);
+		wp_list[wp_i].value); 
 
 	/* Ensure that halting debug mode is enable */
 	retval = aarch64_set_dscr_bits(target, DSCR_HDE, DSCR_HDE);
@@ -1739,19 +1783,25 @@ static int aarch64_unset_watchpoint(struct target *target,
 	retval = aarch64_dap_write_memap_register_u32(target, armv8->debug_base
 			+ CPUV8_DBG_WCR_BASE + 16 * wp_list[wp_i].BRPn,
 			wp_list[wp_i].control);
-	if (retval != ERROR_OK)
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Failed to write watchpoint control register");
 		return retval;
+	}
 	retval = aarch64_dap_write_memap_register_u32(target, armv8->debug_base
 			+ CPUV8_DBG_WVR_BASE + 16 * wp_list[wp_i].BRPn,
 			wp_list[wp_i].value);
-	if (retval != ERROR_OK)
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Failed to write watchpoint upper value register");
 		return retval;
+	}
 
 	retval = aarch64_dap_write_memap_register_u32(target, armv8->debug_base
 			+ CPUV8_DBG_WVR_BASE + 4 + 16 * wp_list[wp_i].BRPn,
 			(uint32_t)wp_list[wp_i].value);
-	if (retval != ERROR_OK)
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Failed to write watchpoint lower value register");
 		return retval;
+	}
 	watchpoint->set = 0;
 
 	return ERROR_OK;
@@ -1783,6 +1833,60 @@ static int aarch64_remove_watchpoint(struct target *target,
 	}
 
 	return ERROR_OK;
+}
+
+int aarch64_hit_watchpoint(struct target *target, struct watchpoint **hit_watchpoint)
+{
+	struct watchpoint *wp = NULL;
+	struct aarch64_common *aarch64 = target_to_aarch64(target);
+	struct armv8_common *armv8 = &aarch64->armv8_common;
+	uint32_t tmp;
+	uint64_t war = 0;
+	int retval;
+
+	retval = mem_ap_read_atomic_u32(armv8->debug_ap,
+									armv8->debug_base + CPUV8_DBG_WAR1,
+									&tmp);
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Failed to read watchpoint upper address register");
+		return retval;
+	}
+	war = tmp;
+	war = (war << 32);
+	retval = mem_ap_read_atomic_u32(armv8->debug_ap,
+									armv8->debug_base + CPUV8_DBG_WAR0,
+									&tmp);
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Failed to read watchpoint lower address register");
+		return retval;
+	}
+	war |= tmp;
+	LOG_DEBUG("watchpoint address register 0x%016" PRIx64, war);
+
+	// TODO: Consider watchpoints with ranges
+	*hit_watchpoint = NULL;
+	for (wp = target->watchpoints; wp; wp = wp->next) {
+		if (wp->set) {
+			if (wp->address == war) {
+				*hit_watchpoint = wp;
+				break;
+			} else {
+				LOG_DEBUG("Skipping watchpoint as address doesn't match. "
+						  "address 0x%016" TARGET_PRIxADDR " war 0x%016" PRIx64,
+						  wp->address, war);
+			}
+		}
+	}
+
+	if (hit_watchpoint) {
+		if (aarch64->step_watchpoints_mode == AARCH64_STEP_WATCHPOINTS_ON) {
+			aarch64_step_internal(target, 1, 0, 1, 1);
+		}
+		return ERROR_OK;
+	}
+
+	LOG_ERROR("Hit watchpoint but no watchpoint known about.");
+	return ERROR_FAIL;
 }
 
 /*
@@ -2449,14 +2553,18 @@ static int aarch64_examine_first(struct target *target)
 		return ERROR_FAIL;
 
 	pc = (struct aarch64_private_config *)target->private_config;
-	if (pc->cti == NULL)
+	if (pc->cti == NULL) {
+		LOG_ERROR("BRH: Missing a private config cti");
 		return ERROR_FAIL;
+	}
 
 	armv8->cti = pc->cti;
 
 	retval = aarch64_dpm_setup(aarch64, debug);
-	if (retval != ERROR_OK)
+	if (retval != ERROR_OK) {
+		LOG_ERROR("dpm setup failed");
 		return retval;
+	}
 
 	/* Setup Breakpoint Register Pairs */
 	aarch64->brp_num = (uint32_t)((debug >> 12) & 0x0F) + 1;
@@ -2499,6 +2607,8 @@ static int aarch64_examine_first(struct target *target)
 static int aarch64_examine(struct target *target)
 {
 	int retval = ERROR_OK;
+	struct aarch64_common *aarch64 = target_to_aarch64(target);
+	struct arm_dpm *dpm = &aarch64->armv8_common.dpm;
 
 	/* don't re-probe hardware after each reset */
 	if (!target_was_examined(target))
@@ -2507,6 +2617,12 @@ static int aarch64_examine(struct target *target)
 	/* Configure core debug access */
 	if (retval == ERROR_OK)
 		retval = aarch64_init_debug_access(target);
+
+	retval = armv8_dpm_initialize(dpm);
+	if (retval != ERROR_OK) {
+		LOG_ERROR("dpm initialization failed");
+		return retval;
+	}
 
 	return retval;
 }
@@ -2758,6 +2874,32 @@ COMMAND_HANDLER(aarch64_mask_interrupts_command)
 	return ERROR_OK;
 }
 
+COMMAND_HANDLER(aarch64_handle_step_watchpoints_command)
+{
+	struct target *target = get_current_target(CMD_CTX);
+	struct aarch64_common *aarch64 = target_to_aarch64(target);
+
+	static const Jim_Nvp nvp_step_watchpoints_modes[] = {
+		{ .name = "off", .value = AARCH64_STEP_WATCHPOINTS_OFF },
+		{ .name = "on", .value = AARCH64_STEP_WATCHPOINTS_ON },
+		{ .name = NULL, .value = -1 },
+	};
+	const Jim_Nvp *n;
+
+	if (CMD_ARGC > 0) {
+		n = Jim_Nvp_name2value_simple(nvp_step_watchpoints_modes, CMD_ARGV[0]);
+		if (n->name == NULL)
+			return ERROR_COMMAND_SYNTAX_ERROR;
+		aarch64->step_watchpoints_mode = n->value;
+	}
+
+	n = Jim_Nvp_value2name_simple(nvp_step_watchpoints_modes,
+								  aarch64->step_watchpoints_mode);
+	command_print(CMD_CTX, "aarch64 step watchpoints %s", n->name);
+
+	return ERROR_OK;
+}
+
 static int jim_mcrmrc(Jim_Interp *interp, int argc, Jim_Obj * const *argv)
 {
 	struct command_context *context;
@@ -2944,7 +3086,13 @@ static const struct command_registration aarch64_exec_command_handlers[] = {
 		.help = "read coprocessor register",
 		.usage = "cpnum op1 CRn CRm op2",
 	},
-
+	{
+		.name = "step_watchpoints",
+		.handler = aarch64_handle_step_watchpoints_command,
+		.mode = COMMAND_EXEC,
+		.help = "Set whether to step when a watchpoint is hit",
+		.usage = "['on'|'off']",
+	},
 
 	COMMAND_REGISTRATION_DONE
 };
@@ -2988,6 +3136,7 @@ struct target_type aarch64_target = {
 	.remove_breakpoint = aarch64_remove_breakpoint,
 	.add_watchpoint = aarch64_add_watchpoint,
 	.remove_watchpoint = aarch64_remove_watchpoint,
+	.hit_watchpoint = aarch64_hit_watchpoint,
 
 	.commands = aarch64_command_handlers,
 	.target_create = aarch64_target_create,

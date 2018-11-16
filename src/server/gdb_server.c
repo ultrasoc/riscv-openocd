@@ -757,6 +757,7 @@ static void gdb_signal_reply(struct target *target, struct connection *connectio
 								"awatch:%08" TARGET_PRIxADDR ";", hit_wp_address);
 						break;
 					default:
+						LOG_ERROR("Unknown watchpoint reason (%d)", hit_wp_type);
 						break;
 				}
 			}
