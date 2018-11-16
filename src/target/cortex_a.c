@@ -2129,7 +2129,7 @@ int cortex_a_hit_watchpoint(struct target *target, struct watchpoint **hit_watch
 	/* TODO: Currently assuming their is just one watchpoint so
 	 * we can report the data address. */
 	/* There may be more watchpoints!! */
-	*hit_watchpoint = target->watchpoints;
+	*hit_watchpoint = NULL;
 	for (wp = target->watchpoints; wp; wp = wp->next) {
 		if (wp->set) {
 			*hit_watchpoint = wp;
