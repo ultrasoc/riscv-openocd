@@ -240,6 +240,7 @@ static unsigned int slot_offset(const struct target *target, slot_t slot)
 				case SLOT1: return 5;
 				case SLOT_LAST: return info->dramsize-1;
 			}
+			break;
 		case 64:
 			switch (slot) {
 				case SLOT0: return 4;
@@ -1407,12 +1408,6 @@ static int strict_step(struct target *target, bool announce)
 
 	LOG_DEBUG("enter");
 
-	struct breakpoint *breakpoint = target->breakpoints;
-	while (breakpoint) {
-		riscv_remove_breakpoint(target, breakpoint);
-		breakpoint = breakpoint->next;
-	}
-
 	struct watchpoint *watchpoint = target->watchpoints;
 	while (watchpoint) {
 		riscv_remove_watchpoint(target, watchpoint);
@@ -1422,12 +1417,6 @@ static int strict_step(struct target *target, bool announce)
 	int result = full_step(target, announce);
 	if (result != ERROR_OK)
 		return result;
-
-	breakpoint = target->breakpoints;
-	while (breakpoint) {
-		riscv_add_breakpoint(target, breakpoint);
-		breakpoint = breakpoint->next;
-	}
 
 	watchpoint = target->watchpoints;
 	while (watchpoint) {
@@ -1462,7 +1451,7 @@ static int step(struct target *target, int current, target_addr_t address,
 		if (result != ERROR_OK)
 			return result;
 	} else {
-		return resume(target, 0, true);
+		return full_step(target, false);
 	}
 
 	return ERROR_OK;
@@ -1675,7 +1664,7 @@ static riscv_error_t handle_halt_routine(struct target *target)
 				break;
 			default:
 				LOG_ERROR("Got invalid bus access status: %d", status);
-				return ERROR_FAIL;
+				goto error;
 		}
 		if (data & DMCONTROL_INTERRUPT) {
 			interrupt_set++;
@@ -1787,6 +1776,8 @@ static riscv_error_t handle_halt_routine(struct target *target)
 					break;
 				default:
 					assert(0);
+					LOG_ERROR("Got invalid register result %d", result);
+					goto error;
 			}
 			if (riscv_xlen(target) == 32) {
 				reg_cache_set(target, reg, data & 0xffffffff);
@@ -1803,6 +1794,8 @@ static riscv_error_t handle_halt_routine(struct target *target)
 		}
 	}
 
+	scans_delete(scans);
+
 	if (dbus_busy) {
 		increase_dbus_busy_delay(target);
 		return RE_AGAIN;
@@ -1815,8 +1808,6 @@ static riscv_error_t handle_halt_routine(struct target *target)
 	/* TODO: get rid of those 2 variables and talk to the cache directly. */
 	info->dpc = reg_cache_get(target, CSR_DPC);
 	info->dcsr = reg_cache_get(target, CSR_DCSR);
-
-	scans_delete(scans);
 
 	cache_invalidate(target);
 
@@ -1847,7 +1838,7 @@ static int handle_halt(struct target *target, bool announce)
 			target->debug_reason = DBG_REASON_BREAKPOINT;
 			break;
 		case DCSR_CAUSE_HWBP:
-			target->debug_reason = DBG_REASON_WPTANDBKPT;
+			target->debug_reason = DBG_REASON_WATCHPOINT;
 			/* If we halted because of a data trigger, gdb doesn't know to do
 			 * the disable-breakpoints-step-enable-breakpoints dance. */
 			info->need_strict_step = true;

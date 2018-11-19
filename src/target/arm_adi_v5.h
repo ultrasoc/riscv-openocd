@@ -308,6 +308,9 @@ struct dap_ops {
 	int (*queue_ap_write_buf)(struct adiv5_ap *ap,
 							  const uint8_t *buffer, uint32_t size,
 							  uint32_t count, uint32_t address);
+
+	/** Optional; called at OpenOCD exit */
+	void (*quit)(struct adiv5_dap *dap);
 };
 
 /*

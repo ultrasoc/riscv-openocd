@@ -28,6 +28,7 @@
 #include "target_type.h"
 #include "armv8_opcodes.h"
 #include "armv8_cache.h"
+#include "arm_semihosting.h"
 #include <helper/time_support.h>
 
 enum restart_mode {
@@ -561,6 +562,9 @@ static int aarch64_poll(struct target *target)
 			if (target->smp)
 				update_halt_gdb(target, debug_reason);
 
+			if (arm_semihosting(target, &retval) != 0)
+				return retval;
+
 			switch (prev_target_state) {
 			case TARGET_RUNNING:
 			case TARGET_UNKNOWN:
@@ -582,6 +586,9 @@ static int aarch64_poll(struct target *target)
 
 static int aarch64_halt(struct target *target)
 {
+	struct armv8_common *armv8 = target_to_armv8(target);
+	armv8->last_run_control_op = ARMV8_RUNCONTROL_HALT;
+
 	if (target->smp)
 		return aarch64_halt_smp(target, false);
 
@@ -874,6 +881,9 @@ static int aarch64_resume(struct target *target, int current,
 	int retval = 0;
 	uint64_t addr = address;
 
+	struct armv8_common *armv8 = target_to_armv8(target);
+	armv8->last_run_control_op = ARMV8_RUNCONTROL_RESUME;
+
 	if (target->state != TARGET_HALTED)
 		return ERROR_TARGET_NOT_HALTED;
 
@@ -1096,6 +1106,8 @@ static int aarch64_step_internal(struct target *target, int current, target_addr
 	uint32_t edecr;
 	int wrp_i = 0;
 	struct aarch64_brp *wrp_list = aarch64->wp_list;
+
+	armv8->last_run_control_op = ARMV8_RUNCONTROL_STEP;
 
 	if (target->state != TARGET_HALTED) {
 		LOG_WARNING("target not halted");
@@ -1981,17 +1993,19 @@ static int aarch64_deassert_reset(struct target *target)
 	if (retval != ERROR_OK)
 		return retval;
 
+	retval = aarch64_init_debug_access(target);
+	if (retval != ERROR_OK)
+		return retval;
+
 	if (target->reset_halt) {
 		if (target->state != TARGET_HALTED) {
 			LOG_WARNING("%s: ran after reset and before halt ...",
 				target_name(target));
 			retval = target_halt(target);
-			if (retval != ERROR_OK)
-				return retval;
 		}
 	}
 
-	return aarch64_init_debug_access(target);
+	return retval;
 }
 
 static int aarch64_write_cpu_memory_slow(struct target *target,
@@ -2683,6 +2697,7 @@ static int aarch64_init_target(struct command_context *cmd_ctx,
 	struct target *target)
 {
 	/* examine_first() does a bunch of this */
+	arm_semihosting_init(target);
 	return ERROR_OK;
 }
 
