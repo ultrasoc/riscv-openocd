@@ -426,6 +426,12 @@ int armv7a_cache_auto_flush_on_write(struct target *target, uint32_t virt,
 	return armv7a_cache_flush_virt(target, virt, size);
 }
 
+int armv7a_cache_auto_flush_on_read(struct target *target, uint32_t virt,
+					uint32_t size)
+{
+	return armv7a_cache_auto_flush_on_write(target, virt, size);
+}
+
 COMMAND_HANDLER(arm7a_l1_cache_info_cmd)
 {
 	struct target *target = get_current_target(CMD_CTX);
