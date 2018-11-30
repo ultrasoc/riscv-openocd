@@ -3623,10 +3623,7 @@ static int cortex_a_mmu(struct target *target, int *enabled)
 static int cortex_a_virt2phys(struct target *target,
 	target_addr_t virt, target_addr_t *phys)
 {
-	int retval = ERROR_FAIL;
-	struct armv7a_common *armv7a = target_to_armv7a(target);
-	struct adiv5_dap *swjdp = armv7a->arm.dap;
-	uint8_t apsel = swjdp->apsel;
+	int retval;
 	int mmu_enabled = 0;
 
 	/*
@@ -3641,22 +3638,17 @@ static int cortex_a_virt2phys(struct target *target,
 		return ERROR_OK;
 	}
 
-	if (armv7a->memory_ap_available && (apsel == armv7a->memory_ap->ap_num)) {
-		uint32_t ret;
-		retval = armv7a_mmu_translate_va(target,
-				virt, &ret);
-		if (retval != ERROR_OK)
-			goto done;
-		*phys = ret;
-	} else {/*  use this method if armv7a->memory_ap not selected
-		 *  mmu must be enable in order to get a correct translation */
-		retval = cortex_a_mmu_modify(target, 1);
-		if (retval != ERROR_OK)
-			goto done;
-		retval = armv7a_mmu_translate_va_pa(target, (uint32_t)virt,
-						    (uint32_t *)phys, 1);
-	}
+	retval = cortex_a_mmu_modify(target, 1);
+	if (retval != ERROR_OK)
+		goto done;
+	// Using this rather than armv7a_mmu_translate_va as this
+	// seemed to cause problems.
+	retval = armv7a_mmu_translate_va_pa(target, (uint32_t)virt,
+										(uint32_t *)phys, 0);
 done:
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Failed to translate virtual address to physical address");
+	}
 	return retval;
 }
 
