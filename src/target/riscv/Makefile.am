@@ -11,6 +11,7 @@ noinst_LTLIBRARIES += %D%/libriscv.la
        %D%/batch.c \
        %D%/program.c \
        %D%/riscv-011.c \
-       %D%/riscv-013.c \
+       %D%/riscv-013-esperanto.c \
+       %D%/riscv-mmap.c \
        %D%/riscv.c \
        %D%/riscv_semihosting.c
