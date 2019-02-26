@@ -10,7 +10,7 @@
 *.lo
 *.la
 *.in
-build/
+*build/
 
 # generated source files
 src/jtag/minidriver_imp.h
@@ -101,3 +101,4 @@ TAGS
 
 # ctags tag files
 tags
+.pydevproject
