@@ -199,7 +199,7 @@ static int do_recv(int skt, char *buffer, size_t len) {
 	int remaining = len;
 	int length = 0;
 
-	while (length < remaining) {
+    while (remaining > 0) { 
 		int recv_len = recv(skt, buffer + length, remaining, 0);
 		if (recv_len <= 0) {
 			/* Check the errno */
