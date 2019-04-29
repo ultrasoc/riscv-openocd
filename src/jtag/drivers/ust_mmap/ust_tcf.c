@@ -213,7 +213,7 @@ static int do_recv(int skt, char *buffer, size_t len) {
 	int remaining = len;
 	int length = 0;
 
-    while (remaining > 0) { 
+	while (remaining > 0) {
 		int recv_len = recv(skt, buffer + length, remaining, 0);
 #ifndef _WIN32
 		/* This disables delayed acks, windows does not support this option, BUT does disable
@@ -324,15 +324,17 @@ static int parse_pkt(ust_tcf_t *s)
 		LOG_DEBUG_IO("event_name: %s", s->pkt.event_name);
 		pos += size + 1;
 		if (s->pkt.data_capacity < s->recv_buffer_size - pos) {
-			s->pkt.data = realloc(s->pkt.data, s->recv_buffer_size - pos);
+			s->pkt.data = realloc(s->pkt.data, (s->recv_buffer_size - pos)+1);
 			if (!s->pkt.data) {
 				LOG_ERROR("Allocation fail");
 				return ERROR_FAIL;
 			}
 			s->pkt.data_capacity = s->recv_buffer_size - pos;
 		}
+		memset(s->pkt.data, 0, s->pkt.data_capacity+1);
 		memcpy(s->pkt.data, s->recv_buffer + pos, s->recv_buffer_size - pos);
 		s->pkt.data_size = s->recv_buffer_size - pos;
+		LOG_DEBUG_IO("event_data: %s", s->pkt.data);
 		break;
 	case UST_TCF_RESULT:
 	case UST_TCF_UNRECOGNIZED:
@@ -361,13 +363,14 @@ static int parse_pkt(ust_tcf_t *s)
 		}
 		pos += size + 1;
 		if (s->pkt.data_capacity < s->recv_buffer_size - pos) {
-			s->pkt.data = realloc(s->pkt.data, s->recv_buffer_size - pos);
+			s->pkt.data = realloc(s->pkt.data, (s->recv_buffer_size - pos)+1);
 			if (!s->pkt.data) {
 				LOG_ERROR("Allocation fail");
 				return ERROR_FAIL;
 			}
 			s->pkt.data_capacity = s->recv_buffer_size - pos;
 		}
+		memset(s->pkt.data, 0, s->pkt.data_capacity+1);
 		memcpy(s->pkt.data, s->recv_buffer + pos, s->recv_buffer_size - pos);
 		s->pkt.data_size = s->recv_buffer_size - pos;
 		break;
