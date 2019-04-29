@@ -413,26 +413,35 @@ static uint32_t dtmcontrol_scan(struct target *target, uint32_t out)
 	struct scan_field field;
 	uint8_t in_value[4];
 	uint8_t out_value[4];
+	uint32_t in = 0;
 
-	buf_set_u32(out_value, 0, 32, out);
+	if( !transport_is_mmap())
+	{
+		buf_set_u32(out_value, 0, 32, out);
 
-	jtag_add_ir_scan(target->tap, &select_dtmcontrol, TAP_IDLE);
+		jtag_add_ir_scan(target->tap, &select_dtmcontrol, TAP_IDLE);
 
-	field.num_bits = 32;
-	field.out_value = out_value;
-	field.in_value = in_value;
-	jtag_add_dr_scan(target->tap, 1, &field, TAP_IDLE);
+		field.num_bits = 32;
+		field.out_value = out_value;
+		field.in_value = in_value;
+		jtag_add_dr_scan(target->tap, 1, &field, TAP_IDLE);
 
-	/* Always return to dmi. */
-	select_dmi(target);
+		/* Always return to dmi. */
+		select_dmi(target);
 
-	int retval = jtag_execute_queue();
-	if (retval != ERROR_OK) {
-		LOG_ERROR("failed jtag scan: %d", retval);
-		return retval;
+		int retval = jtag_execute_queue();
+		if (retval != ERROR_OK) {
+			LOG_ERROR("failed jtag scan: %d", retval);
+			return retval;
+		}
+
+		in = buf_get_u32(field.in_value, 0, 32);
 	}
-
-	uint32_t in = buf_get_u32(field.in_value, 0, 32);
+	else
+	{
+		extern uint32_t emulate_dtmcontrol_scan(struct target *target, uint32_t out);
+		in = emulate_dtmcontrol_scan( target, out );
+	}
 	LOG_DEBUG("DTMCS: 0x%x -> 0x%x", out, in);
 
 	return in;

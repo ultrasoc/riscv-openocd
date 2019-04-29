@@ -757,7 +757,7 @@ static riscv_reg_t read_abstract_arg(struct target *target, unsigned index,
 		case 64:
 			dmi_read(target, &v, DMI_DATA0 + offset + 1);
 			value |= ((uint64_t) v) << 32;
-			/* falls through */
+			/* falls through *//* no break */
 		case 32:
 			dmi_read(target, &v, DMI_DATA0 + offset);
 			value |= v;
@@ -775,7 +775,7 @@ static int write_abstract_arg(struct target *target, unsigned index,
 			return ERROR_FAIL;
 		case 64:
 			dmi_write(target, DMI_DATA0 + offset + 1, value >> 32);
-			/* falls through */
+			/* falls through *//* no break */
 		case 32:
 			dmi_write(target, DMI_DATA0 + offset, value);
 	}
@@ -1781,14 +1781,14 @@ static void write_to_buf(uint8_t *buffer, uint64_t value, unsigned size)
 			buffer[6] = value >> 48;
 			buffer[5] = value >> 40;
 			buffer[4] = value >> 32;
-			/* falls through */
+			/* falls through *//* no break */
 		case 4:
 			buffer[3] = value >> 24;
 			buffer[2] = value >> 16;
-			/* falls through */
+			/* falls through *//* no break */
 		case 2:
 			buffer[1] = value >> 8;
-			/* falls through */
+			/* falls through *//* no break */
 		case 1:
 			buffer[0] = value;
 			break;
