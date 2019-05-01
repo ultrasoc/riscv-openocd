@@ -41,6 +41,11 @@ enum aarch64_isrmasking_mode {
 	AARCH64_ISRMASK_ON,
 };
 
+enum aarch64_step_watchpoints_mode {
+	AARCH64_STEP_WATCHPOINTS_OFF,
+	AARCH64_STEP_WATCHPOINTS_ON
+};
+
 struct aarch64_brp {
 	int used;
 	int type;
@@ -62,9 +67,15 @@ struct aarch64_common {
 	int brp_num_available;
 	struct aarch64_brp *brp_list;
 
+	/* Watchpoint register pairs */
+	int wp_num;
+	int wp_num_available;
+	struct aarch64_brp *wp_list;
+
 	struct armv8_common armv8_common;
 
 	enum aarch64_isrmasking_mode isrmasking_mode;
+	enum aarch64_step_watchpoints_mode step_watchpoints_mode;
 };
 
 static inline struct aarch64_common *

@@ -210,6 +210,8 @@ struct jtag_interface {
 
 	const struct swd_driver *swd;
 
+	const struct mmap_interface *mmap;
+
 	/**
 	 * Execute queued commands.
 	 * @returns ERROR_OK on success, or an error code on failure.

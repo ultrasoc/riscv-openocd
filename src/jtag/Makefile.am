@@ -40,6 +40,11 @@ include %D%/aice/Makefile.am
 %C%_libjtag_la_LIBADD += $(top_builddir)/%D%/aice/libocdaice.la
 endif
 
+if MMAP_TRANSPORT
+include %D%/mmap/Makefile.am
+%C%_libjtag_la_LIBADD += $(top_builddir)/%D%/mmap/libocdmmap.la
+endif
+
 include %D%/drivers/Makefile.am
 %C%_libjtag_la_LIBADD += $(top_builddir)/%D%/drivers/libocdjtagdrivers.la
 

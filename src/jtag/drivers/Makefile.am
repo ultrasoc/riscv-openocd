@@ -164,6 +164,17 @@ if XDS110
 DRIVERFILES += %D%/xds110.c
 endif
 
+if UST_JTAGPROBE
+DRIVERFILES += %D%/ust_jtagprobe/ust_driver.c
+DRIVERFILES += %D%/ust_jtagprobe/ust_jtagprobe.c
+endif
+
+if UST_MMAP
+DRIVERFILES += %D%/ust_mmap/ust_mmap_driver.c
+DRIVERFILES += %D%/ust_mmap/ust_mmap.c
+DRIVERFILES += %D%/ust_mmap/ust_tcf.c
+endif
+
 DRIVERHEADERS = \
 	%D%/bitbang.h \
 	%D%/bitq.h \

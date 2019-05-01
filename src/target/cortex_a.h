@@ -63,12 +63,24 @@ enum cortex_a_dacrfixup_mode {
 	CORTEX_A_DACRFIXUP_ON
 };
 
+enum cortex_a_step_watchpoints_mode {
+	CORTEX_A_STEP_WATCHPOINTS_OFF,
+	CORTEX_A_STEP_WATCHPOINTS_ON
+};
+
 struct cortex_a_brp {
 	int used;
 	int type;
 	uint32_t value;
 	uint32_t control;
 	uint8_t BRPn;
+};
+
+struct cortex_a_wrp {
+	int used;
+	uint32_t value;
+	uint32_t control;
+	uint8_t WRPn;
 };
 
 struct cortex_a_common {
@@ -92,12 +104,16 @@ struct cortex_a_common {
 	int brp_num;
 	int brp_num_available;
 	struct cortex_a_brp *brp_list;
+	int wrp_num;
+	int wrp_num_available;
+	struct cortex_a_wrp *wrp_list;
 
 	uint32_t cpuid;
 	uint32_t didr;
 
 	enum cortex_a_isrmasking_mode isrmasking_mode;
 	enum cortex_a_dacrfixup_mode dacrfixup_mode;
+	enum cortex_a_step_watchpoints_mode step_watchpoints_mode;
 
 	struct armv7a_common armv7a_common;
 

@@ -70,6 +70,10 @@ static int cortex_a_set_hybrid_breakpoint(struct target *target,
 	struct breakpoint *breakpoint);
 static int cortex_a_unset_breakpoint(struct target *target,
 	struct breakpoint *breakpoint);
+static int cortex_a_set_watchpoint(struct target *target,
+	struct watchpoint *watchpoint);
+static int cortex_a_unset_watchpoint(struct target *target,
+	struct watchpoint *watchpoint);
 static int cortex_a_mmu(struct target *target, int *enabled);
 static int cortex_a_mmu_modify(struct target *target, int enable);
 static int cortex_a_virt2phys(struct target *target,
@@ -77,6 +81,17 @@ static int cortex_a_virt2phys(struct target *target,
 static int cortex_a_read_cpu_memory(struct target *target,
 	uint32_t address, uint32_t size, uint32_t count, uint8_t *buffer);
 
+
+static unsigned int ilog2(unsigned int x)
+{
+	unsigned int y = 0;
+	x /= 2;
+	while (x) {
+		++y;
+		x /= 2;
+		}
+	return y;
+}
 
 /*  restore cp15_control_reg at resume */
 static int cortex_a_restore_cp15_control_reg(struct target *target)
@@ -203,12 +218,36 @@ static int cortex_a_init_debug_access(struct target *target)
 	uint32_t dscr;
 	int retval;
 
-	/* lock memory-mapped access to debug registers to prevent
-	 * software interference */
-	retval = mem_ap_write_u32(armv7a->debug_ap,
-			armv7a->debug_base + CPUDBG_LOCKACCESS, 0);
-	if (retval != ERROR_OK)
-		return retval;
+	/* If not used lock memory-mapped access to debug registers to
+	 * prevent software interference. */
+	if (!armv7a->debug_ap->dap->mmap_mode) {
+		retval = mem_ap_write_u32(armv7a->debug_ap,
+								  armv7a->debug_base + CPUDBG_LOCKACCESS, 0);
+		if (retval != ERROR_OK)
+			LOG_WARNING("Failed to write to the lock access register. Debug interface may be unlocked for memory mapped accesses.");
+			return retval;
+	} else {
+		/* TODO: Failure here should halt progress as the mmap transport cannot work
+		 * without this. */
+		uint32_t lock_status;
+		retval = mem_ap_write_u32(armv7a->debug_ap,
+								  armv7a->debug_base + CPUDBG_LOCKACCESS, 0xC5ACCE55);
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to write to lock access for memory-mapped access to debug registers");
+			return retval;
+		}
+		retval = mem_ap_read_u32(armv7a->debug_ap,
+								 armv7a->debug_base + CPUDBG_LOCKSTATUS, &lock_status);
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to read lock status for memory-mapped access to debug registers");
+			return retval;
+		}
+		if ((lock_status & 0x7) != 0x1) {
+			LOG_ERROR("Couldn't unlock memory-mapped access to debug registers: lock_status 0x%08x",
+					  lock_status);
+			return ERROR_FAIL;
+		}
+	}
 
 	/* Disable cacheline fills and force cache write-through in debug state */
 	retval = mem_ap_write_u32(armv7a->debug_ap,
@@ -608,7 +647,7 @@ static int cortex_a_dpm_setup(struct cortex_a_common *a, uint32_t didr)
 
 	dpm->bpwp_enable = cortex_a_bpwp_enable;
 	dpm->bpwp_disable = cortex_a_bpwp_disable;
-
+    
 	retval = arm_dpm_setup(dpm);
 	if (retval == ERROR_OK)
 		retval = arm_dpm_initialize(dpm);
@@ -1025,7 +1064,7 @@ static int cortex_a_debug_entry(struct target *target)
 
 	/* Examine debug reason */
 	arm_dpm_report_dscr(&armv7a->dpm, cortex_a->cpudbg_dscr);
-
+    
 	/* save address of instruction that triggered the watchpoint? */
 	if (target->debug_reason == DBG_REASON_WATCHPOINT) {
 		uint32_t wfar;
@@ -1143,8 +1182,8 @@ int cortex_a_set_dscr_bits(struct target *target, unsigned long bit_mask, unsign
 	return retval;
 }
 
-static int cortex_a_step(struct target *target, int current, target_addr_t address,
-	int handle_breakpoints)
+static int cortex_a_step_internal(struct target *target, int current, target_addr_t address,
+	int handle_breakpoints, int debug_execution)
 {
 	struct cortex_a_common *cortex_a = target_to_cortex_a(target);
 	struct armv7a_common *armv7a = target_to_armv7a(target);
@@ -1152,6 +1191,8 @@ static int cortex_a_step(struct target *target, int current, target_addr_t addre
 	struct breakpoint *breakpoint = NULL;
 	struct breakpoint stepbreakpoint;
 	struct reg *r;
+	int wrp_i = 0;
+	struct cortex_a_wrp *wrp_list = cortex_a->wrp_list;
 	int retval;
 
 	if (target->state != TARGET_HALTED) {
@@ -1177,6 +1218,20 @@ static int cortex_a_step(struct target *target, int current, target_addr_t addre
 			cortex_a_unset_breakpoint(target, breakpoint);
 	}
 
+	/* Disable watchpoints */
+	for (wrp_i = 0; wrp_i < cortex_a->wrp_num; wrp_i++) {
+		if (wrp_list[wrp_i].used) {
+			retval = cortex_a_dap_write_memap_register_u32(
+				target,
+				armv7a->debug_base + CPUDBG_WCR_BASE + 4 * wrp_list[wrp_i].WRPn,
+				wrp_list[wrp_i].control & ~1);
+		}
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to disable watchpoints");
+			return retval;
+		}
+	}
+
 	/* Setup single step breakpoint */
 	stepbreakpoint.address = address;
 	stepbreakpoint.asid = 0;
@@ -1197,7 +1252,7 @@ static int cortex_a_step(struct target *target, int current, target_addr_t addre
 
 	target->debug_reason = DBG_REASON_SINGLESTEP;
 
-	retval = cortex_a_resume(target, 1, address, 0, 0);
+	retval = cortex_a_resume(target, 1, address, 0, debug_execution);
 	if (retval != ERROR_OK)
 		return retval;
 
@@ -1224,6 +1279,20 @@ static int cortex_a_step(struct target *target, int current, target_addr_t addre
 
 	target->debug_reason = DBG_REASON_BREAKPOINT;
 
+	/* Re-enable the watchpoints */
+	for (wrp_i = 0; wrp_i < cortex_a->wrp_num; wrp_i++) {
+		if (wrp_list[wrp_i].used) {
+			retval = cortex_a_dap_write_memap_register_u32(
+				target,
+				armv7a->debug_base + CPUDBG_WCR_BASE + 4 * wrp_list[wrp_i].WRPn,
+				wrp_list[wrp_i].control);
+		}
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to re-enable watchpoints");
+			return retval;
+		}
+	}
+
 	if (breakpoint)
 		cortex_a_set_breakpoint(target, breakpoint, 0);
 
@@ -1231,6 +1300,13 @@ static int cortex_a_step(struct target *target, int current, target_addr_t addre
 		LOG_DEBUG("target stepped");
 
 	return ERROR_OK;
+}
+
+static int cortex_a_step(struct target *target, int current, target_addr_t address,
+	int handle_breakpoints)
+{
+	return cortex_a_step_internal(target, current, address,
+								  handle_breakpoints, 0);
 }
 
 static int cortex_a_restore_context(struct target *target, bool bpwp)
@@ -1661,6 +1737,209 @@ static int cortex_a_remove_breakpoint(struct target *target, struct breakpoint *
 	return ERROR_OK;
 }
 
+/**
+ * Sets a watchpoint for an Cortex-A target in one of the watchpoint units.  It is
+ * considered a bug to call this function when there are no available watchpoint
+ * units.
+ *
+ * @param target Pointer to an Cortex-A target to set a watchpoint on
+ * @param watchpoint Pointer to the watchpoint to be set
+ * @return Error status if watchpoint set fails or the result of executing the
+ * JTAG queue
+ */
+static int cortex_a_set_watchpoint(struct target *target, struct watchpoint *watchpoint)
+{
+	int retval = ERROR_OK;
+	int wrp_i = 0;
+	uint32_t control;
+	uint8_t address_mask = ilog2(watchpoint->length);
+	uint8_t byte_address_select = 0xFF;
+	uint8_t load_store_access_control;
+	struct cortex_a_common *cortex_a = target_to_cortex_a(target);
+	struct armv7a_common *armv7a = &cortex_a->armv7a_common;
+	struct cortex_a_wrp *wrp_list = cortex_a->wrp_list;
+
+	if (watchpoint->set) {
+		LOG_WARNING("watchpoint already set");
+		return retval;
+	}
+
+	/*check available contect WRPs*/
+	while (wrp_list[wrp_i].used && (wrp_i < cortex_a->wrp_num))
+		wrp_i++;
+
+	if (wrp_i >= cortex_a->wrp_num) {
+		LOG_ERROR("ERROR Can not find free Watchpoint Register Pair");
+		return ERROR_FAIL;
+	}
+
+	/* TODO: Use byte select to allow smaller lengths */
+	if (address_mask == 0x1) {
+		LOG_WARNING("Watchpoint length must be a power of 2 and at least 4. (%d)",
+					watchpoint->length);
+		return ERROR_FAIL;
+	} else if (address_mask == 0x2) {
+		address_mask = 0;
+	}
+
+	switch (watchpoint->rw) {
+	case WPT_READ:
+		load_store_access_control = 0x1;
+		break;
+	case WPT_WRITE:
+		load_store_access_control = 0x2;
+		break;
+	case WPT_ACCESS:
+		load_store_access_control = 0x3;
+		break;
+	default:
+		LOG_ERROR("Unknown watchpoint type (%d)", watchpoint->rw);
+		return ERROR_FAIL;
+	}
+
+	watchpoint->set = wrp_i + 1;
+	control = (address_mask << 24) |
+		(byte_address_select << 5) |
+		(load_store_access_control << 3) |
+		(0x3 << 1) | 1;
+	wrp_list[wrp_i].used = 1;
+	wrp_list[wrp_i].value = (watchpoint->address & 0xFFFFFFFC);
+	wrp_list[wrp_i].control = control;
+
+	retval = cortex_a_dap_write_memap_register_u32(target, armv7a->debug_base
+			+ CPUDBG_WVR_BASE + 4 * wrp_list[wrp_i].WRPn,
+			wrp_list[wrp_i].value);
+	if (retval != ERROR_OK)
+		return retval;
+
+	retval = cortex_a_dap_write_memap_register_u32(target, armv7a->debug_base
+			+ CPUDBG_WCR_BASE + 4 * wrp_list[wrp_i].WRPn,
+			wrp_list[wrp_i].control);
+	if (retval != ERROR_OK)
+		return retval;
+
+	LOG_DEBUG("wp %i control 0x%0" PRIx32 " value 0x%0" PRIx32, wrp_i,
+			wrp_list[wrp_i].control,
+			wrp_list[wrp_i].value);
+
+	return ERROR_OK;
+}
+
+/**
+ * Unset an existing watchpoint and clear the used watchpoint unit.
+ *
+ * @param target Pointer to the target to have the watchpoint removed
+ * @param watchpoint Pointer to the watchpoint to be removed
+ * @return Error status while trying to unset the watchpoint or the result of
+ *         executing the JTAG queue
+ */
+static int cortex_a_unset_watchpoint(struct target *target, struct watchpoint *watchpoint)
+{
+	int retval;
+	struct cortex_a_common *cortex_a = target_to_cortex_a(target);
+	struct armv7a_common *armv7a = &cortex_a->armv7a_common;
+	struct cortex_a_wrp *wrp_list = cortex_a->wrp_list;
+
+	if (!watchpoint->set) {
+		LOG_WARNING("watchpoint not set");
+		return ERROR_OK;
+	}
+
+	int wrp_i = watchpoint->set - 1;
+	if ((wrp_i < 0) || (wrp_i >= cortex_a->wrp_num)) {
+		LOG_DEBUG("Invalid WRP number in watchpoint");
+		return ERROR_OK;
+	}
+	LOG_DEBUG("wrp %i control 0x%0" PRIx32 " value 0x%0" PRIx32, wrp_i,
+			wrp_list[wrp_i].control, wrp_list[wrp_i].value);
+	wrp_list[wrp_i].used = 0;
+	wrp_list[wrp_i].value = 0;
+	wrp_list[wrp_i].control = 0;
+	retval = cortex_a_dap_write_memap_register_u32(target, armv7a->debug_base
+			+ CPUDBG_WCR_BASE + 4 * wrp_list[wrp_i].WRPn,
+			wrp_list[wrp_i].control);
+	if (retval != ERROR_OK)
+		return retval;
+	retval = cortex_a_dap_write_memap_register_u32(target, armv7a->debug_base
+			+ CPUDBG_WVR_BASE + 4 * wrp_list[wrp_i].WRPn,
+			wrp_list[wrp_i].value);
+	if (retval != ERROR_OK)
+		return retval;
+	watchpoint->set = 0;
+
+	return ERROR_OK;
+}
+
+/**
+ * Add a watchpoint to an Cortex-A target.  If there are no watchpoint units
+ * available, an error response is returned.
+ *
+ * @param target Pointer to the Cortex-A target to add a watchpoint to
+ * @param watchpoint Pointer to the watchpoint to be added
+ * @return Error status while trying to add the watchpoint
+ */
+int cortex_a_add_watchpoint(struct target *target, struct watchpoint *watchpoint)
+{
+	struct cortex_a_common *cortex_a = target_to_cortex_a(target);
+
+	if ((cortex_a->wrp_num_available < 1)) {
+		LOG_INFO("no hardware watchpoint available");
+		return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
+	}
+
+	cortex_a->wrp_num_available--;
+	return cortex_a_set_watchpoint(target, watchpoint);
+}
+
+/**
+ * Remove a watchpoint from an Cortex-A target.  The watchpoint will be unset and
+ * the used watchpoint unit will be reopened.
+ *
+ * @param target Pointer to the target to remove a watchpoint from
+ * @param watchpoint Pointer to the watchpoint to be removed
+ * @return Result of trying to unset the watchpoint
+ */
+int cortex_a_remove_watchpoint(struct target *target, struct watchpoint *watchpoint)
+{
+	struct cortex_a_common *cortex_a = target_to_cortex_a(target);
+
+	if (watchpoint->set) {
+		cortex_a->wrp_num_available++;
+		cortex_a_unset_watchpoint(target, watchpoint);
+	} else {
+		LOG_WARNING("Attempt to remove unset watchpoint");
+	}
+
+	return ERROR_OK;
+}
+
+int cortex_a_hit_watchpoint(struct target *target, struct watchpoint **hit_watchpoint)
+{
+	struct watchpoint *wp = NULL;
+	struct cortex_a_common *cortex_a = target_to_cortex_a(target);
+
+	/* TODO: Currently assuming their is just one watchpoint so
+	 * we can report the data address. */
+	/* There may be more watchpoints!! */
+	*hit_watchpoint = NULL;
+	for (wp = target->watchpoints; wp; wp = wp->next) {
+		if (wp->set) {
+			*hit_watchpoint = wp;
+			break;
+		}
+	}
+
+	if (hit_watchpoint) {
+		if (cortex_a->step_watchpoints_mode == CORTEX_A_STEP_WATCHPOINTS_ON) {
+			cortex_a_step_internal(target, 1, 0, 1, 1);
+		}
+		return ERROR_OK;
+	}
+
+	LOG_ERROR("Hit watchpoint but no watchpoint known about.");
+	return ERROR_FAIL;
+}
+
 /*
  * Cortex-A Reset functions
  */
@@ -1987,30 +2266,34 @@ static int cortex_a_write_cpu_memory_slow(struct target *target,
 static int cortex_a_write_cpu_memory_fast(struct target *target,
 	uint32_t count, const uint8_t *buffer, uint32_t *dscr)
 {
-	/* Writes count objects of size 4 from *buffer. Old value of DSCR must be
-	 * in *dscr; updated to new value. This is fast but only works for
-	 * word-sized objects at aligned addresses.
-	 * Preconditions:
-	 * - Address is in R0 and must be a multiple of 4.
-	 * - R0 is marked dirty.
-	 */
 	struct armv7a_common *armv7a = target_to_armv7a(target);
-	int retval;
+	if (armv7a->debug_ap->use_mem_ap_regs) {
+		/* Writes count objects of size 4 from *buffer. Old value of DSCR must be
+		 * in *dscr; updated to new value. This is fast but only works for
+		 * word-sized objects at aligned addresses.
+		 * Preconditions:
+		 * - Address is in R0 and must be a multiple of 4.
+		 * - R0 is marked dirty.
+		 */
+		int retval;
 
-	/* Switch to fast mode if not already in that mode. */
-	retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_FAST_MODE, dscr);
-	if (retval != ERROR_OK)
-		return retval;
+		/* Switch to fast mode if not already in that mode. */
+		retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_FAST_MODE, dscr);
+		if (retval != ERROR_OK)
+			return retval;
 
-	/* Latch STC instruction. */
-	retval = mem_ap_write_atomic_u32(armv7a->debug_ap,
-			armv7a->debug_base + CPUDBG_ITR, ARMV4_5_STC(0, 1, 0, 1, 14, 5, 0, 4));
-	if (retval != ERROR_OK)
-		return retval;
+		/* Latch STC instruction. */
+		retval = mem_ap_write_atomic_u32(armv7a->debug_ap,
+										 armv7a->debug_base + CPUDBG_ITR, ARMV4_5_STC(0, 1, 0, 1, 14, 5, 0, 4));
+		if (retval != ERROR_OK)
+			return retval;
 
-	/* Transfer all the data and issue all the instructions. */
-	return mem_ap_write_buf_noincr(armv7a->debug_ap, buffer,
-			4, count, armv7a->debug_base + CPUDBG_DTRRX);
+		/* Transfer all the data and issue all the instructions. */
+		return mem_ap_write_buf_noincr(armv7a->debug_ap, buffer,
+									   4, count, armv7a->debug_base + CPUDBG_DTRRX);
+	} else {
+		return cortex_a_write_cpu_memory_slow(target, 4, count, buffer, dscr);
+	}
 }
 
 static int cortex_a_write_cpu_memory(struct target *target,
@@ -2231,86 +2514,90 @@ static int cortex_a_read_cpu_memory_slow(struct target *target,
 static int cortex_a_read_cpu_memory_fast(struct target *target,
 	uint32_t count, uint8_t *buffer, uint32_t *dscr)
 {
-	/* Reads count objects of size 4 into *buffer. Old value of DSCR must be in
-	 * *dscr; updated to new value. This is fast but only works for word-sized
-	 * objects at aligned addresses.
-	 * Preconditions:
-	 * - Address is in R0 and must be a multiple of 4.
-	 * - R0 is marked dirty.
-	 */
 	struct armv7a_common *armv7a = target_to_armv7a(target);
-	uint32_t u32;
-	int retval;
-
-	/* Switch to non-blocking mode if not already in that mode. */
-	retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_NON_BLOCKING, dscr);
-	if (retval != ERROR_OK)
-		return retval;
-
-	/* Issue the LDC instruction via a write to ITR. */
-	retval = cortex_a_exec_opcode(target, ARMV4_5_LDC(0, 1, 0, 1, 14, 5, 0, 4), dscr);
-	if (retval != ERROR_OK)
-		return retval;
-
-	count--;
-
-	if (count > 0) {
-		/* Switch to fast mode if not already in that mode. */
-		retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_FAST_MODE, dscr);
-		if (retval != ERROR_OK)
-			return retval;
-
-		/* Latch LDC instruction. */
-		retval = mem_ap_write_atomic_u32(armv7a->debug_ap,
-				armv7a->debug_base + CPUDBG_ITR, ARMV4_5_LDC(0, 1, 0, 1, 14, 5, 0, 4));
-		if (retval != ERROR_OK)
-			return retval;
-
-		/* Read the value transferred to DTRTX into the buffer. Due to fast
-		 * mode rules, this blocks until the instruction finishes executing and
-		 * then reissues the read instruction to read the next word from
-		 * memory. The last read of DTRTX in this call reads the second-to-last
-		 * word from memory and issues the read instruction for the last word.
+	if (armv7a->debug_ap->use_mem_ap_regs) {
+		/* Reads count objects of size 4 into *buffer. Old value of DSCR must be in
+		 * *dscr; updated to new value. This is fast but only works for word-sized
+		 * objects at aligned addresses.
+		 * Preconditions:
+		 * - Address is in R0 and must be a multiple of 4.
+		 * - R0 is marked dirty.
 		 */
-		retval = mem_ap_read_buf_noincr(armv7a->debug_ap, buffer,
-				4, count, armv7a->debug_base + CPUDBG_DTRTX);
+		uint32_t u32;
+		int retval;
+
+		/* Switch to non-blocking mode if not already in that mode. */
+		retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_NON_BLOCKING, dscr);
 		if (retval != ERROR_OK)
 			return retval;
 
-		/* Advance. */
-		buffer += count * 4;
+		/* Issue the LDC instruction via a write to ITR. */
+		retval = cortex_a_exec_opcode(target, ARMV4_5_LDC(0, 1, 0, 1, 14, 5, 0, 4), dscr);
+		if (retval != ERROR_OK)
+			return retval;
+
+		count--;
+
+		if (count > 0) {
+			/* Switch to fast mode if not already in that mode. */
+			retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_FAST_MODE, dscr);
+			if (retval != ERROR_OK)
+				return retval;
+
+			/* Latch LDC instruction. */
+			retval = mem_ap_write_atomic_u32(armv7a->debug_ap,
+											 armv7a->debug_base + CPUDBG_ITR, ARMV4_5_LDC(0, 1, 0, 1, 14, 5, 0, 4));
+			if (retval != ERROR_OK)
+				return retval;
+
+			/* Read the value transferred to DTRTX into the buffer. Due to fast
+			 * mode rules, this blocks until the instruction finishes executing and
+			 * then reissues the read instruction to read the next word from
+			 * memory. The last read of DTRTX in this call reads the second-to-last
+			 * word from memory and issues the read instruction for the last word.
+			 */
+			retval = mem_ap_read_buf_noincr(armv7a->debug_ap, buffer,
+											4, count, armv7a->debug_base + CPUDBG_DTRTX);
+			if (retval != ERROR_OK)
+				return retval;
+
+			/* Advance. */
+			buffer += count * 4;
+		}
+
+		/* Wait for last issued instruction to complete. */
+		retval = cortex_a_wait_instrcmpl(target, dscr, false);
+		if (retval != ERROR_OK)
+			return retval;
+
+		/* Switch to non-blocking mode if not already in that mode. */
+		retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_NON_BLOCKING, dscr);
+		if (retval != ERROR_OK)
+			return retval;
+
+		/* Check for faults and return early. */
+		if (*dscr & (DSCR_STICKY_ABORT_PRECISE | DSCR_STICKY_ABORT_IMPRECISE))
+			return ERROR_OK; /* A data fault is not considered a system failure. */
+
+		/* Wait until DTRTX is full (according to ARMv7-A/-R architecture manual
+		 * section C8.4.3, checking InstrCmpl_l is not sufficient; one must also
+		 * check TXfull_l). Most of the time this will be free because TXfull_l
+		 * will be set immediately and cached in dscr. */
+		retval = cortex_a_wait_dscr_bits(target, DSCR_DTRTX_FULL_LATCHED,
+										 DSCR_DTRTX_FULL_LATCHED, dscr);
+		if (retval != ERROR_OK)
+			return retval;
+
+		/* Read the value transferred to DTRTX into the buffer. This is the last
+		 * word. */
+		retval = mem_ap_read_atomic_u32(armv7a->debug_ap,
+										armv7a->debug_base + CPUDBG_DTRTX, &u32);
+		if (retval != ERROR_OK)
+			return retval;
+		target_buffer_set_u32(target, buffer, u32);
+	} else {
+		return cortex_a_read_cpu_memory_slow(target, 4, count, buffer, dscr);
 	}
-
-	/* Wait for last issued instruction to complete. */
-	retval = cortex_a_wait_instrcmpl(target, dscr, false);
-	if (retval != ERROR_OK)
-		return retval;
-
-	/* Switch to non-blocking mode if not already in that mode. */
-	retval = cortex_a_set_dcc_mode(target, DSCR_EXT_DCC_NON_BLOCKING, dscr);
-	if (retval != ERROR_OK)
-		return retval;
-
-	/* Check for faults and return early. */
-	if (*dscr & (DSCR_STICKY_ABORT_PRECISE | DSCR_STICKY_ABORT_IMPRECISE))
-		return ERROR_OK; /* A data fault is not considered a system failure. */
-
-	/* Wait until DTRTX is full (according to ARMv7-A/-R architecture manual
-	 * section C8.4.3, checking InstrCmpl_l is not sufficient; one must also
-	 * check TXfull_l). Most of the time this will be free because TXfull_l
-	 * will be set immediately and cached in dscr. */
-	retval = cortex_a_wait_dscr_bits(target, DSCR_DTRTX_FULL_LATCHED,
-			DSCR_DTRTX_FULL_LATCHED, dscr);
-	if (retval != ERROR_OK)
-		return retval;
-
-	/* Read the value transferred to DTRTX into the buffer. This is the last
-	 * word. */
-	retval = mem_ap_read_atomic_u32(armv7a->debug_ap,
-			armv7a->debug_base + CPUDBG_DTRTX, &u32);
-	if (retval != ERROR_OK)
-		return retval;
-	target_buffer_set_u32(target, buffer, u32);
 
 	return ERROR_OK;
 }
@@ -2775,6 +3062,27 @@ static int cortex_a_examine_first(struct target *target)
 
 	LOG_DEBUG("Configured %i hw breakpoints", cortex_a->brp_num);
 
+	/* Setup Watchpoint Register Pairs */
+	cortex_a->wrp_num = 1;
+	/* TODO: How to work out the data address that triggered the
+	 * watchpoint without just deducing it from just having one
+	 * watchpoint on a single word.*/
+	LOG_WARNING("Only allowing %d watchpoints but the hardware has %d.\n"
+	"This way the data address can be reported to the debugger.",
+				cortex_a->wrp_num,
+				((didr >> 28) & 0x0F) + 1);
+	cortex_a->wrp_num_available = cortex_a->wrp_num;
+	free(cortex_a->wrp_list);
+	cortex_a->wrp_list = calloc(cortex_a->wrp_num, sizeof(struct cortex_a_wrp));
+	for (i = 0; i < cortex_a->wrp_num; i++) {
+		cortex_a->wrp_list[i].used = 0;
+		cortex_a->wrp_list[i].value = 0;
+		cortex_a->wrp_list[i].control = 0;
+		cortex_a->wrp_list[i].WRPn = i;
+	}
+
+	LOG_DEBUG("Configured %i hw watchpoints", cortex_a->wrp_num);
+
 	/* select debug_ap as default */
 	swjdp->apsel = armv7a->debug_ap->ap_num;
 
@@ -3022,6 +3330,32 @@ COMMAND_HANDLER(handle_cortex_a_dacrfixup_command)
 	return ERROR_OK;
 }
 
+COMMAND_HANDLER(cortex_a_handle_step_watchpoints_command)
+{
+	struct target *target = get_current_target(CMD_CTX);
+	struct cortex_a_common *cortex_a = target_to_cortex_a(target);
+
+	static const Jim_Nvp nvp_step_watchpoints_modes[] = {
+		{ .name = "off", .value = CORTEX_A_STEP_WATCHPOINTS_OFF },
+		{ .name = "on", .value = CORTEX_A_STEP_WATCHPOINTS_ON },
+		{ .name = NULL, .value = -1 },
+	};
+	const Jim_Nvp *n;
+
+	if (CMD_ARGC > 0) {
+		n = Jim_Nvp_name2value_simple(nvp_step_watchpoints_modes, CMD_ARGV[0]);
+		if (n->name == NULL)
+			return ERROR_COMMAND_SYNTAX_ERROR;
+		cortex_a->step_watchpoints_mode = n->value;
+	}
+
+	n = Jim_Nvp_value2name_simple(nvp_step_watchpoints_modes,
+								  cortex_a->step_watchpoints_mode);
+	command_print(CMD_CTX, "cortex_a step watchpoints %s", n->name);
+
+	return ERROR_OK;
+}
+
 static const struct command_registration cortex_a_exec_command_handlers[] = {
 	{
 		.name = "cache_info",
@@ -3050,6 +3384,13 @@ static const struct command_registration cortex_a_exec_command_handlers[] = {
 		.mode = COMMAND_ANY,
 		.help = "set domain access control (DACR) to all-manager "
 			"on memory access",
+		.usage = "['on'|'off']",
+	},
+	{
+		.name = "step_watchpoints",
+		.handler = cortex_a_handle_step_watchpoints_command,
+		.mode = COMMAND_EXEC,
+		.help = "Set whether to step when a watchpoint is hit",
 		.usage = "['on'|'off']",
 	},
 	{
@@ -3111,8 +3452,9 @@ struct target_type cortexa_target = {
 	.add_context_breakpoint = cortex_a_add_context_breakpoint,
 	.add_hybrid_breakpoint = cortex_a_add_hybrid_breakpoint,
 	.remove_breakpoint = cortex_a_remove_breakpoint,
-	.add_watchpoint = NULL,
-	.remove_watchpoint = NULL,
+	.add_watchpoint = cortex_a_add_watchpoint,
+	.remove_watchpoint = cortex_a_remove_watchpoint,
+	.hit_watchpoint = cortex_a_hit_watchpoint,
 
 	.commands = cortex_a_command_handlers,
 	.target_create = cortex_a_target_create,
@@ -3188,8 +3530,9 @@ struct target_type cortexr4_target = {
 	.add_context_breakpoint = cortex_a_add_context_breakpoint,
 	.add_hybrid_breakpoint = cortex_a_add_hybrid_breakpoint,
 	.remove_breakpoint = cortex_a_remove_breakpoint,
-	.add_watchpoint = NULL,
-	.remove_watchpoint = NULL,
+	.add_watchpoint = cortex_a_add_watchpoint,
+	.remove_watchpoint = cortex_a_remove_watchpoint,
+	.hit_watchpoint = cortex_a_hit_watchpoint,
 
 	.commands = cortex_r4_command_handlers,
 	.target_create = cortex_r4_target_create,

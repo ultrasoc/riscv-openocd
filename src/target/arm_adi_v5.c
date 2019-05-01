@@ -99,6 +99,11 @@ static uint32_t max_tar_block_size(uint32_t tar_autoincr_block, uint32_t address
 
 static int mem_ap_setup_csw(struct adiv5_ap *ap, uint32_t csw)
 {
+	if (!ap->use_mem_ap_regs) {
+		LOG_ERROR("Tried to access CSW register when not accessible");
+		return ERROR_FAIL;
+	}
+
 	csw |= ap->csw_default;
 
 	if (csw != ap->csw_value) {
@@ -115,6 +120,10 @@ static int mem_ap_setup_csw(struct adiv5_ap *ap, uint32_t csw)
 
 static int mem_ap_setup_tar(struct adiv5_ap *ap, uint32_t tar)
 {
+	if (!ap->use_mem_ap_regs) {
+		LOG_ERROR("Tried to access TAR register when not accessible");
+		return ERROR_FAIL;
+	}
 	if (!ap->tar_valid || tar != ap->tar_value) {
 		/* LOG_DEBUG("DAP: Set TAR %x",tar); */
 		int retval = dap_queue_ap_write(ap, MEM_AP_REG_TAR, tar);
@@ -130,6 +139,10 @@ static int mem_ap_setup_tar(struct adiv5_ap *ap, uint32_t tar)
 
 static int mem_ap_read_tar(struct adiv5_ap *ap, uint32_t *tar)
 {
+	if (!ap->use_mem_ap_regs) {
+		LOG_ERROR("Tried to access TAR register when not accessible");
+		return ERROR_FAIL;
+	}
 	int retval = dap_queue_ap_read(ap, MEM_AP_REG_TAR, tar);
 	if (retval != ERROR_OK) {
 		ap->tar_valid = false;
@@ -149,6 +162,10 @@ static int mem_ap_read_tar(struct adiv5_ap *ap, uint32_t *tar)
 
 static uint32_t mem_ap_get_tar_increment(struct adiv5_ap *ap)
 {
+	if (!ap->use_mem_ap_regs) {
+		LOG_ERROR("Tried to access TAR register when not accessible");
+		return ERROR_FAIL;
+	}
 	switch (ap->csw_value & CSW_ADDRINC_MASK) {
 	case CSW_ADDRINC_SINGLE:
 		switch (ap->csw_value & CSW_SIZE_MASK) {
@@ -171,6 +188,10 @@ static uint32_t mem_ap_get_tar_increment(struct adiv5_ap *ap)
  */
 static void mem_ap_update_tar_cache(struct adiv5_ap *ap)
 {
+	if (!ap->use_mem_ap_regs) {
+		LOG_ERROR("Tried to access TAR register when not accessible");
+		return;
+	}
 	if (!ap->tar_valid)
 		return;
 
@@ -200,6 +221,10 @@ static void mem_ap_update_tar_cache(struct adiv5_ap *ap)
  */
 static int mem_ap_setup_transfer(struct adiv5_ap *ap, uint32_t csw, uint32_t tar)
 {
+	if (!ap->use_mem_ap_regs) {
+		LOG_ERROR("Tried to access CSW and TAR registers when not accessible");
+		return ERROR_FAIL;
+	}
 	int retval;
 	retval = mem_ap_setup_csw(ap, csw);
 	if (retval != ERROR_OK)
@@ -224,18 +249,22 @@ static int mem_ap_setup_transfer(struct adiv5_ap *ap, uint32_t csw, uint32_t tar
 int mem_ap_read_u32(struct adiv5_ap *ap, uint32_t address,
 		uint32_t *value)
 {
-	int retval;
+	if (ap->use_mem_ap_regs) {
+		int retval;
 
-	/* Use banked addressing (REG_BDx) to avoid some link traffic
-	 * (updating TAR) when reading several consecutive addresses.
-	 */
-	retval = mem_ap_setup_transfer(ap,
-			CSW_32BIT | (ap->csw_value & CSW_ADDRINC_MASK),
-			address & 0xFFFFFFF0);
-	if (retval != ERROR_OK)
-		return retval;
+		/* Use banked addressing (REG_BDx) to avoid some link traffic
+		 * (updating TAR) when reading several consecutive addresses.
+		 */
+		retval = mem_ap_setup_transfer(ap,
+									   CSW_32BIT | (ap->csw_value & CSW_ADDRINC_MASK),
+									   address & 0xFFFFFFF0);
+		if (retval != ERROR_OK)
+			return retval;
 
-	return dap_queue_ap_read(ap, MEM_AP_REG_BD0 | (address & 0xC), value);
+		return dap_queue_ap_read(ap, MEM_AP_REG_BD0 | (address & 0xC), value);
+	} else {
+		return dap_queue_ap_read(ap, address, value);
+	}
 }
 
 /**
@@ -276,19 +305,23 @@ int mem_ap_read_atomic_u32(struct adiv5_ap *ap, uint32_t address,
 int mem_ap_write_u32(struct adiv5_ap *ap, uint32_t address,
 		uint32_t value)
 {
-	int retval;
+	if (ap->use_mem_ap_regs) {
+		int retval;
 
-	/* Use banked addressing (REG_BDx) to avoid some link traffic
-	 * (updating TAR) when writing several consecutive addresses.
-	 */
-	retval = mem_ap_setup_transfer(ap,
-			CSW_32BIT | (ap->csw_value & CSW_ADDRINC_MASK),
-			address & 0xFFFFFFF0);
-	if (retval != ERROR_OK)
-		return retval;
+		/* Use banked addressing (REG_BDx) to avoid some link traffic
+		 * (updating TAR) when writing several consecutive addresses.
+		 */
+		retval = mem_ap_setup_transfer(ap,
+				CSW_32BIT | (ap->csw_value & CSW_ADDRINC_MASK),
+				address & 0xFFFFFFF0);
+		if (retval != ERROR_OK)
+			return retval;
 
-	return dap_queue_ap_write(ap, MEM_AP_REG_BD0 | (address & 0xC),
-			value);
+		return dap_queue_ap_write(ap, MEM_AP_REG_BD0 | (address & 0xC),
+				value);
+	} else {
+			return dap_queue_ap_write(ap, address, value);
+	}
 }
 
 /**
@@ -328,116 +361,133 @@ int mem_ap_write_atomic_u32(struct adiv5_ap *ap, uint32_t address,
 static int mem_ap_write(struct adiv5_ap *ap, const uint8_t *buffer, uint32_t size, uint32_t count,
 		uint32_t address, bool addrinc)
 {
-	struct adiv5_dap *dap = ap->dap;
-	size_t nbytes = size * count;
-	const uint32_t csw_addrincr = addrinc ? CSW_ADDRINC_SINGLE : CSW_ADDRINC_OFF;
-	uint32_t csw_size;
-	uint32_t addr_xor;
 	int retval = ERROR_OK;
 
-	/* TI BE-32 Quirks mode:
-	 * Writes on big-endian TMS570 behave very strangely. Observed behavior:
-	 *   size   write address   bytes written in order
-	 *   4      TAR ^ 0         (val >> 24), (val >> 16), (val >> 8), (val)
-	 *   2      TAR ^ 2         (val >> 8), (val)
-	 *   1      TAR ^ 3         (val)
-	 * For example, if you attempt to write a single byte to address 0, the processor
-	 * will actually write a byte to address 3.
-	 *
-	 * To make writes of size < 4 work as expected, we xor a value with the address before
-	 * setting the TAP, and we set the TAP after every transfer rather then relying on
-	 * address increment. */
+	if (ap->use_mem_ap_regs) {
+		struct adiv5_dap *dap = ap->dap;
+		size_t nbytes = size * count;
+		const uint32_t csw_addrincr = addrinc ? CSW_ADDRINC_SINGLE : CSW_ADDRINC_OFF;
+		uint32_t csw_size;
+		uint32_t addr_xor;
 
-	if (size == 4) {
-		csw_size = CSW_32BIT;
-		addr_xor = 0;
-	} else if (size == 2) {
-		csw_size = CSW_16BIT;
-		addr_xor = dap->ti_be_32_quirks ? 2 : 0;
-	} else if (size == 1) {
-		csw_size = CSW_8BIT;
-		addr_xor = dap->ti_be_32_quirks ? 3 : 0;
-	} else {
-		return ERROR_TARGET_UNALIGNED_ACCESS;
-	}
+		/* TI BE-32 Quirks mode:
+		 * Writes on big-endian TMS570 behave very strangely. Observed behavior:
+		 *   size   write address   bytes written in order
+		 *   4      TAR ^ 0         (val >> 24), (val >> 16), (val >> 8), (val)
+		 *   2      TAR ^ 2         (val >> 8), (val)
+		 *   1      TAR ^ 3         (val)
+		 * For example, if you attempt to write a single byte to address 0, the processor
+		 * will actually write a byte to address 3.
+		 *
+		 * To make writes of size < 4 work as expected, we xor a value with the address before
+		 * setting the TAP, and we set the TAP after every transfer rather then relying on
+		 * address increment. */
 
-	if (ap->unaligned_access_bad && (address % size != 0))
-		return ERROR_TARGET_UNALIGNED_ACCESS;
+		if (size == 4) {
+			csw_size = CSW_32BIT;
+			addr_xor = 0;
+		} else if (size == 2) {
+			csw_size = CSW_16BIT;
+			addr_xor = dap->ti_be_32_quirks ? 2 : 0;
+		} else if (size == 1) {
+			csw_size = CSW_8BIT;
+			addr_xor = dap->ti_be_32_quirks ? 3 : 0;
+		} else {
+			return ERROR_TARGET_UNALIGNED_ACCESS;
+		}
 
-	while (nbytes > 0) {
-		uint32_t this_size = size;
+		if (ap->unaligned_access_bad && (address % size != 0))
+			return ERROR_TARGET_UNALIGNED_ACCESS;
 
-		/* Select packed transfer if possible */
-		if (addrinc && ap->packed_transfers && nbytes >= 4
+		while (nbytes > 0) {
+			uint32_t this_size = size;
+
+			/* Select packed transfer if possible */
+			if (addrinc && ap->packed_transfers && nbytes >= 4
 				&& max_tar_block_size(ap->tar_autoincr_block, address) >= 4) {
-			this_size = 4;
-			retval = mem_ap_setup_csw(ap, csw_size | CSW_ADDRINC_PACKED);
-		} else {
-			retval = mem_ap_setup_csw(ap, csw_size | csw_addrincr);
+				this_size = 4;
+				retval = mem_ap_setup_csw(ap, csw_size | CSW_ADDRINC_PACKED);
+			} else {
+				retval = mem_ap_setup_csw(ap, csw_size | csw_addrincr);
+			}
+
+			if (retval != ERROR_OK)
+				break;
+
+			retval = mem_ap_setup_tar(ap, address ^ addr_xor);
+			if (retval != ERROR_OK)
+				return retval;
+
+			/* How many source bytes each transfer will consume, and their location in the DRW,
+			 * depends on the type of transfer and alignment. See ARM document IHI0031C. */
+			uint32_t outvalue = 0;
+			uint32_t drw_byte_idx = address;
+			if (dap->ti_be_32_quirks) {
+				switch (this_size) {
+				case 4:
+					outvalue |= (uint32_t)*buffer++ << 8 * (3 ^ (drw_byte_idx++ & 3) ^ addr_xor);
+					outvalue |= (uint32_t)*buffer++ << 8 * (3 ^ (drw_byte_idx++ & 3) ^ addr_xor);
+					outvalue |= (uint32_t)*buffer++ << 8 * (3 ^ (drw_byte_idx++ & 3) ^ addr_xor);
+					outvalue |= (uint32_t)*buffer++ << 8 * (3 ^ (drw_byte_idx & 3) ^ addr_xor);
+					break;
+				case 2:
+					outvalue |= (uint32_t)*buffer++ << 8 * (1 ^ (drw_byte_idx++ & 3) ^ addr_xor);
+					outvalue |= (uint32_t)*buffer++ << 8 * (1 ^ (drw_byte_idx & 3) ^ addr_xor);
+					break;
+				case 1:
+					outvalue |= (uint32_t)*buffer++ << 8 * (0 ^ (drw_byte_idx & 3) ^ addr_xor);
+					break;
+				}
+			} else {
+				switch (this_size) {
+				case 4:
+					outvalue |= (uint32_t)*buffer++ << 8 * (drw_byte_idx++ & 3);
+					outvalue |= (uint32_t)*buffer++ << 8 * (drw_byte_idx++ & 3);
+					/* fallthrough */
+				case 2:
+					outvalue |= (uint32_t)*buffer++ << 8 * (drw_byte_idx++ & 3);
+					/* fallthrough */
+				case 1:
+					outvalue |= (uint32_t)*buffer++ << 8 * (drw_byte_idx & 3);
+				}
+			}
+
+			nbytes -= this_size;
+
+			retval = dap_queue_ap_write(ap, MEM_AP_REG_DRW, outvalue);
+			if (retval != ERROR_OK)
+				break;
+
+			mem_ap_update_tar_cache(ap);
+			if (addrinc)
+				address += this_size;
 		}
 
-		if (retval != ERROR_OK)
-			break;
+		/* REVISIT: Might want to have a queued version of this function that does not run. */
+		if (retval == ERROR_OK)
+			retval = dap_run(dap);
 
-		retval = mem_ap_setup_tar(ap, address ^ addr_xor);
-		if (retval != ERROR_OK)
+		if (retval != ERROR_OK) {
+			uint32_t tar;
+			if (mem_ap_read_tar(ap, &tar) == ERROR_OK)
+				LOG_ERROR("Failed to write memory at 0x%08"PRIx32, tar);
+			else
+				LOG_ERROR("Failed to write memory and, additionally, failed to find out where");
+		}
+	} else {
+		assert(addrinc);
+		if (size != 4) {
+			retval = dap_queue_ap_write_buf(ap, buffer, size, count, address);
 			return retval;
-
-		/* How many source bytes each transfer will consume, and their location in the DRW,
-		 * depends on the type of transfer and alignment. See ARM document IHI0031C. */
-		uint32_t outvalue = 0;
-		uint32_t drw_byte_idx = address;
-		if (dap->ti_be_32_quirks) {
-			switch (this_size) {
-			case 4:
-				outvalue |= (uint32_t)*buffer++ << 8 * (3 ^ (drw_byte_idx++ & 3) ^ addr_xor);
-				outvalue |= (uint32_t)*buffer++ << 8 * (3 ^ (drw_byte_idx++ & 3) ^ addr_xor);
-				outvalue |= (uint32_t)*buffer++ << 8 * (3 ^ (drw_byte_idx++ & 3) ^ addr_xor);
-				outvalue |= (uint32_t)*buffer++ << 8 * (3 ^ (drw_byte_idx & 3) ^ addr_xor);
-				break;
-			case 2:
-				outvalue |= (uint32_t)*buffer++ << 8 * (1 ^ (drw_byte_idx++ & 3) ^ addr_xor);
-				outvalue |= (uint32_t)*buffer++ << 8 * (1 ^ (drw_byte_idx & 3) ^ addr_xor);
-				break;
-			case 1:
-				outvalue |= (uint32_t)*buffer++ << 8 * (0 ^ (drw_byte_idx & 3) ^ addr_xor);
-				break;
-			}
-		} else {
-			switch (this_size) {
-			case 4:
-				outvalue |= (uint32_t)*buffer++ << 8 * (drw_byte_idx++ & 3);
-				outvalue |= (uint32_t)*buffer++ << 8 * (drw_byte_idx++ & 3);
-				/* fallthrough */
-			case 2:
-				outvalue |= (uint32_t)*buffer++ << 8 * (drw_byte_idx++ & 3);
-				/* fallthrough */
-			case 1:
-				outvalue |= (uint32_t)*buffer++ << 8 * (drw_byte_idx & 3);
+		}
+		for (uint32_t i=0; i < count; i++) {
+			retval = dap_queue_ap_write(ap, address + (4 * i),
+										*((uint32_t *) (buffer + (4 * i))));
+			if (retval != ERROR_OK) {
+				LOG_ERROR("write failed");
+				return retval;
 			}
 		}
-
-		nbytes -= this_size;
-
-		retval = dap_queue_ap_write(ap, MEM_AP_REG_DRW, outvalue);
-		if (retval != ERROR_OK)
-			break;
-
-		mem_ap_update_tar_cache(ap);
-		if (addrinc)
-			address += this_size;
-	}
-
-	/* REVISIT: Might want to have a queued version of this function that does not run. */
-	if (retval == ERROR_OK)
-		retval = dap_run(dap);
-
-	if (retval != ERROR_OK) {
-		uint32_t tar;
-		if (mem_ap_read_tar(ap, &tar) == ERROR_OK)
-			LOG_ERROR("Failed to write memory at 0x%08"PRIx32, tar);
-		else
-			LOG_ERROR("Failed to write memory and, additionally, failed to find out where");
 	}
 
 	return retval;
@@ -458,138 +508,156 @@ static int mem_ap_write(struct adiv5_ap *ap, const uint8_t *buffer, uint32_t siz
 static int mem_ap_read(struct adiv5_ap *ap, uint8_t *buffer, uint32_t size, uint32_t count,
 		uint32_t adr, bool addrinc)
 {
-	struct adiv5_dap *dap = ap->dap;
-	size_t nbytes = size * count;
-	const uint32_t csw_addrincr = addrinc ? CSW_ADDRINC_SINGLE : CSW_ADDRINC_OFF;
-	uint32_t csw_size;
-	uint32_t address = adr;
 	int retval = ERROR_OK;
 
-	/* TI BE-32 Quirks mode:
-	 * Reads on big-endian TMS570 behave strangely differently than writes.
-	 * They read from the physical address requested, but with DRW byte-reversed.
-	 * For example, a byte read from address 0 will place the result in the high bytes of DRW.
-	 * Also, packed 8-bit and 16-bit transfers seem to sometimes return garbage in some bytes,
-	 * so avoid them. */
+	if (ap->use_mem_ap_regs) {
+		struct adiv5_dap *dap = ap->dap;
+		size_t nbytes = size * count;
+		const uint32_t csw_addrincr = addrinc ? CSW_ADDRINC_SINGLE : CSW_ADDRINC_OFF;
+		uint32_t csw_size;
+		uint32_t address = adr;
 
-	if (size == 4)
-		csw_size = CSW_32BIT;
-	else if (size == 2)
-		csw_size = CSW_16BIT;
-	else if (size == 1)
-		csw_size = CSW_8BIT;
-	else
-		return ERROR_TARGET_UNALIGNED_ACCESS;
+		/* TI BE-32 Quirks mode:
+		 * Reads on big-endian TMS570 behave strangely differently than writes.
+		 * They read from the physical address requested, but with DRW byte-reversed.
+		 * For example, a byte read from address 0 will place the result in the high bytes of DRW.
+		 * Also, packed 8-bit and 16-bit transfers seem to sometimes return garbage in some bytes,
+		 * so avoid them. */
 
-	if (ap->unaligned_access_bad && (adr % size != 0))
-		return ERROR_TARGET_UNALIGNED_ACCESS;
+		if (size == 4)
+			csw_size = CSW_32BIT;
+		else if (size == 2)
+			csw_size = CSW_16BIT;
+		else if (size == 1)
+			csw_size = CSW_8BIT;
+		else
+			return ERROR_TARGET_UNALIGNED_ACCESS;
 
-	/* Allocate buffer to hold the sequence of DRW reads that will be made. This is a significant
-	 * over-allocation if packed transfers are going to be used, but determining the real need at
-	 * this point would be messy. */
-	uint32_t *read_buf = calloc(count, sizeof(uint32_t));
-	/* Multiplication count * sizeof(uint32_t) may overflow, calloc() is safe */
-	uint32_t *read_ptr = read_buf;
-	if (read_buf == NULL) {
-		LOG_ERROR("Failed to allocate read buffer");
-		return ERROR_FAIL;
-	}
+		if (ap->unaligned_access_bad && (adr % size != 0))
+			return ERROR_TARGET_UNALIGNED_ACCESS;
 
-	/* Queue up all reads. Each read will store the entire DRW word in the read buffer. How many
-	 * useful bytes it contains, and their location in the word, depends on the type of transfer
-	 * and alignment. */
-	while (nbytes > 0) {
-		uint32_t this_size = size;
+		/* Allocate buffer to hold the sequence of DRW reads that will be made. This is a significant
+		 * over-allocation if packed transfers are going to be used, but determining the real need at
+		 * this point would be messy. */
+		uint32_t *read_buf = calloc(count, sizeof(uint32_t));
+		/* Multiplication count * sizeof(uint32_t) may overflow, calloc() is safe */
+		uint32_t *read_ptr = read_buf;
+		if (read_buf == NULL) {
+			LOG_ERROR("Failed to allocate read buffer");
+			return ERROR_FAIL;
+		}
 
-		/* Select packed transfer if possible */
-		if (addrinc && ap->packed_transfers && nbytes >= 4
+		/* Queue up all reads. Each read will store the entire DRW word in the read buffer. How many
+		 * useful bytes it contains, and their location in the word, depends on the type of transfer
+		 * and alignment. */
+		while (nbytes > 0) {
+			uint32_t this_size = size;
+
+			/* Select packed transfer if possible */
+			if (addrinc && ap->packed_transfers && nbytes >= 4
 				&& max_tar_block_size(ap->tar_autoincr_block, address) >= 4) {
-			this_size = 4;
-			retval = mem_ap_setup_csw(ap, csw_size | CSW_ADDRINC_PACKED);
-		} else {
-			retval = mem_ap_setup_csw(ap, csw_size | csw_addrincr);
-		}
-		if (retval != ERROR_OK)
-			break;
-
-		retval = mem_ap_setup_tar(ap, address);
-		if (retval != ERROR_OK)
-			break;
-
-		retval = dap_queue_ap_read(ap, MEM_AP_REG_DRW, read_ptr++);
-		if (retval != ERROR_OK)
-			break;
-
-		nbytes -= this_size;
-		if (addrinc)
-			address += this_size;
-
-		mem_ap_update_tar_cache(ap);
-	}
-
-	if (retval == ERROR_OK)
-		retval = dap_run(dap);
-
-	/* Restore state */
-	address = adr;
-	nbytes = size * count;
-	read_ptr = read_buf;
-
-	/* If something failed, read TAR to find out how much data was successfully read, so we can
-	 * at least give the caller what we have. */
-	if (retval != ERROR_OK) {
-		uint32_t tar;
-		if (mem_ap_read_tar(ap, &tar) == ERROR_OK) {
-			/* TAR is incremented after failed transfer on some devices (eg Cortex-M4) */
-			LOG_ERROR("Failed to read memory at 0x%08"PRIx32, tar);
-			if (nbytes > tar - address)
-				nbytes = tar - address;
-		} else {
-			LOG_ERROR("Failed to read memory and, additionally, failed to find out where");
-			nbytes = 0;
-		}
-	}
-
-	/* Replay loop to populate caller's buffer from the correct word and byte lane */
-	while (nbytes > 0) {
-		uint32_t this_size = size;
-
-		if (addrinc && ap->packed_transfers && nbytes >= 4
-				&& max_tar_block_size(ap->tar_autoincr_block, address) >= 4) {
-			this_size = 4;
-		}
-
-		if (dap->ti_be_32_quirks) {
-			switch (this_size) {
-			case 4:
-				*buffer++ = *read_ptr >> 8 * (3 - (address++ & 3));
-				*buffer++ = *read_ptr >> 8 * (3 - (address++ & 3));
-				/* fallthrough */
-			case 2:
-				*buffer++ = *read_ptr >> 8 * (3 - (address++ & 3));
-				/* fallthrough */
-			case 1:
-				*buffer++ = *read_ptr >> 8 * (3 - (address++ & 3));
+				this_size = 4;
+				retval = mem_ap_setup_csw(ap, csw_size | CSW_ADDRINC_PACKED);
+			} else {
+				retval = mem_ap_setup_csw(ap, csw_size | csw_addrincr);
 			}
-		} else {
-			switch (this_size) {
-			case 4:
-				*buffer++ = *read_ptr >> 8 * (address++ & 3);
-				*buffer++ = *read_ptr >> 8 * (address++ & 3);
-				/* fallthrough */
-			case 2:
-				*buffer++ = *read_ptr >> 8 * (address++ & 3);
-				/* fallthrough */
-			case 1:
-				*buffer++ = *read_ptr >> 8 * (address++ & 3);
+			if (retval != ERROR_OK)
+				break;
+
+			retval = mem_ap_setup_tar(ap, address);
+			if (retval != ERROR_OK)
+				break;
+
+			retval = dap_queue_ap_read(ap, MEM_AP_REG_DRW, read_ptr++);
+			if (retval != ERROR_OK)
+				break;
+
+			nbytes -= this_size;
+			if (addrinc)
+				address += this_size;
+
+			mem_ap_update_tar_cache(ap);
+		}
+
+		if (retval == ERROR_OK)
+			retval = dap_run(dap);
+
+		/* Restore state */
+		address = adr;
+		nbytes = size * count;
+		read_ptr = read_buf;
+
+		/* If something failed, read TAR to find out how much data was successfully read, so we can
+		 * at least give the caller what we have. */
+		if (retval != ERROR_OK) {
+			uint32_t tar;
+			if (mem_ap_read_tar(ap, &tar) == ERROR_OK) {
+				/* TAR is incremented after failed transfer on some devices (eg Cortex-M4) */
+				LOG_ERROR("Failed to read memory at 0x%08"PRIx32, tar);
+				if (nbytes > tar - address)
+					nbytes = tar - address;
+			} else {
+				LOG_ERROR("Failed to read memory and, additionally, failed to find out where");
+				nbytes = 0;
 			}
 		}
 
-		read_ptr++;
-		nbytes -= this_size;
-	}
+		/* Replay loop to populate caller's buffer from the correct word and byte lane */
+		while (nbytes > 0) {
+			uint32_t this_size = size;
 
-	free(read_buf);
+			if (addrinc && ap->packed_transfers && nbytes >= 4
+				&& max_tar_block_size(ap->tar_autoincr_block, address) >= 4) {
+				this_size = 4;
+			}
+
+			if (dap->ti_be_32_quirks) {
+				switch (this_size) {
+				case 4:
+					*buffer++ = *read_ptr >> 8 * (3 - (address++ & 3));
+					*buffer++ = *read_ptr >> 8 * (3 - (address++ & 3));
+					/* fallthrough */
+				case 2:
+					*buffer++ = *read_ptr >> 8 * (3 - (address++ & 3));
+					/* fallthrough */
+				case 1:
+					*buffer++ = *read_ptr >> 8 * (3 - (address++ & 3));
+				}
+			} else {
+				switch (this_size) {
+				case 4:
+					*buffer++ = *read_ptr >> 8 * (address++ & 3);
+					*buffer++ = *read_ptr >> 8 * (address++ & 3);
+					/* fallthrough */
+				case 2:
+					*buffer++ = *read_ptr >> 8 * (address++ & 3);
+					/* fallthrough */
+				case 1:
+					*buffer++ = *read_ptr >> 8 * (address++ & 3);
+				}
+			}
+
+			read_ptr++;
+			nbytes -= this_size;
+		}
+
+		free(read_buf);
+	} else {
+		assert(addrinc);
+		if (size != 4) {
+			retval = dap_queue_ap_read_buf(ap, buffer, size, count, adr);
+			return retval;
+		}
+		for (uint32_t i=0; i < count; i++) {
+			// TODO: Assuming host and target are little-endian
+			retval = dap_queue_ap_read(ap, adr + (4 * i),
+									   ((uint32_t *) (buffer + (4 * i))));
+			if (retval != ERROR_OK) {
+				LOG_ERROR("Read failed");
+				return retval;
+			}
+		}
+	}
 	return retval;
 }
 
@@ -745,50 +813,59 @@ int mem_ap_init(struct adiv5_ap *ap)
 	int retval;
 	struct adiv5_dap *dap = ap->dap;
 
-	ap->tar_valid = false;
-	ap->csw_value = 0;      /* force csw and tar write */
-	retval = mem_ap_setup_transfer(ap, CSW_8BIT | CSW_ADDRINC_PACKED, 0);
-	if (retval != ERROR_OK)
-		return retval;
-
-	retval = dap_queue_ap_read(ap, MEM_AP_REG_CSW, &csw);
-	if (retval != ERROR_OK)
-		return retval;
-
-	retval = dap_queue_ap_read(ap, MEM_AP_REG_CFG, &cfg);
-	if (retval != ERROR_OK)
-		return retval;
-
-	retval = dap_run(dap);
-	if (retval != ERROR_OK)
-		return retval;
-
-	if (csw & CSW_ADDRINC_PACKED)
-		ap->packed_transfers = true;
-	else
+	if (transport_is_mmap()) {
+		ap->use_mem_ap_regs = false; // TODO: Respect setting this in the config
 		ap->packed_transfers = false;
+		dap->mmap_mode = true;
+	} else {
+		ap->use_mem_ap_regs = true;
+		ap->tar_valid = false;
+		ap->csw_value = 0;      /* force csw and tar write */
+		retval = mem_ap_setup_transfer(ap, CSW_8BIT | CSW_ADDRINC_PACKED, 0);
+		if (retval != ERROR_OK)
+			return retval;
 
-	/* Packed transfers on TI BE-32 processors do not work correctly in
-	 * many cases. */
-	if (dap->ti_be_32_quirks)
-		ap->packed_transfers = false;
+		retval = dap_queue_ap_read(ap, MEM_AP_REG_CSW, &csw);
+		if (retval != ERROR_OK)
+			return retval;
 
-	LOG_DEBUG("MEM_AP Packed Transfers: %s",
-			ap->packed_transfers ? "enabled" : "disabled");
+		retval = dap_queue_ap_read(ap, MEM_AP_REG_CFG, &cfg);
+		if (retval != ERROR_OK)
+			return retval;
 
-	/* The ARM ADI spec leaves implementation-defined whether unaligned
-	 * memory accesses work, only work partially, or cause a sticky error.
-	 * On TI BE-32 processors, reads seem to return garbage in some bytes
-	 * and unaligned writes seem to cause a sticky error.
-	 * TODO: it would be nice to have a way to detect whether unaligned
-	 * operations are supported on other processors. */
-	ap->unaligned_access_bad = dap->ti_be_32_quirks;
+		retval = dap_run(dap);
+		if (retval != ERROR_OK)
+			return retval;
 
-	LOG_DEBUG("MEM_AP CFG: large data %d, long address %d, big-endian %d",
-			!!(cfg & 0x04), !!(cfg & 0x02), !!(cfg & 0x01));
+		if (csw & CSW_ADDRINC_PACKED)
+			ap->packed_transfers = true;
+		else
+			ap->packed_transfers = false;
 
+		/* Packed transfers on TI BE-32 processors do not work correctly in
+		 * many cases. */
+		if (dap->ti_be_32_quirks)
+			ap->packed_transfers = false;
+
+		LOG_DEBUG("MEM_AP Packed Transfers: %s",
+				  ap->packed_transfers ? "enabled" : "disabled");
+
+		/* The ARM ADI spec leaves implementation-defined whether unaligned
+		 * memory accesses work, only work partially, or cause a sticky error.
+		 * On TI BE-32 processors, reads seem to return garbage in some bytes
+		 * and unaligned writes seem to cause a sticky error.
+		 * TODO: it would be nice to have a way to detect whether unaligned
+		 * operations are supported on other processors. */
+		ap->unaligned_access_bad = dap->ti_be_32_quirks;
+
+		LOG_DEBUG("MEM_AP CFG: large data %d, long address %d, big-endian %d",
+				  !!(cfg & 0x04), !!(cfg & 0x02), !!(cfg & 0x01));
+
+		dap->mmap_mode = false;
+	}
+	
 	return ERROR_OK;
-}
+}	
 
 /**
  * Put the debug link into SWD mode, if the target supports it.
@@ -882,6 +959,17 @@ static bool is_dap_cid_ok(uint32_t cid)
  */
 int dap_find_ap(struct adiv5_dap *dap, enum ap_type type_to_find, struct adiv5_ap **ap_out)
 {
+	if (transport_is_mmap()) {
+		if ((type_to_find == AP_TYPE_APB_AP) || (type_to_find == AP_TYPE_AHB_AP)) {
+			/* Access port not important in mmap transport. */
+			*ap_out = &dap->ap[0];
+			return ERROR_OK;
+		} else {
+			LOG_ERROR("Unknown ap type for mmap transport (%d)", type_to_find);
+			return ERROR_FAIL;
+		}
+	}
+
 	int ap_num;
 
 	/* Maximum AP number is 255 since the SELECT register is 8 bits */
@@ -1912,6 +2000,29 @@ COMMAND_HANDLER(dap_ti_be_32_quirks_command)
 	return 0;
 }
 
+COMMAND_HANDLER(dap_use_mem_ap_regs_command)
+{
+	struct adiv5_dap *dap = adiv5_get_dap(CMD_DATA);
+	uint32_t enable;
+
+	switch (CMD_ARGC) {
+	case 0:
+		break;
+	case 1:
+		COMMAND_PARSE_NUMBER(u32, CMD_ARGV[0], enable);
+		if (enable > 1)
+			return ERROR_COMMAND_SYNTAX_ERROR;
+		break;
+	default:
+		return ERROR_COMMAND_SYNTAX_ERROR;
+	}
+	dap->ap[dap->apsel].use_mem_ap_regs = enable;
+	command_print(CMD_CTX, "use_mem_ap_regs %s (selected ap %d)",
+				  enable ? "enabled" : "disabled", dap->apsel);
+
+	return 0;
+}
+
 const struct command_registration dap_instance_commands[] = {
 	{
 		.name = "info",
@@ -1982,6 +2093,13 @@ const struct command_registration dap_instance_commands[] = {
 		.handler = dap_ti_be_32_quirks_command,
 		.mode = COMMAND_CONFIG,
 		.help = "set/get quirks mode for TI TMS450/TMS570 processors",
+		.usage = "[enable]",
+	},
+	{
+		.name = "use_mem_ap_regs",
+		.handler = dap_use_mem_ap_regs_command,
+		.mode = COMMAND_CONFIG,
+		.help = "set/get mem ap registers used",
 		.usage = "[enable]",
 	},
 	COMMAND_REGISTRATION_DONE
