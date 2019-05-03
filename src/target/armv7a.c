@@ -91,6 +91,14 @@ done:
 /*  retrieve main id register  */
 static int armv7a_read_midr(struct target *target)
 {
+    /* This never changes so only read it once */
+    /*static int read_midr = 0; 
+    if (read_midr == 1)
+    {
+        return ERROR_OK;
+    }
+    read_midr = 1;*/
+    
 	int retval = ERROR_FAIL;
 	struct armv7a_common *armv7a = target_to_armv7a(target);
 	struct arm_dpm *dpm = armv7a->arm.dpm;
