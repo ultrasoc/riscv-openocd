@@ -1224,6 +1224,17 @@ int target_get_gdb_reg_list(struct target *target,
 	return target->type->get_gdb_reg_list(target, reg_list, reg_list_size, reg_class);
 }
 
+int target_get_gdb_reg_list_noread(struct target *target,
+		struct reg **reg_list[], int *reg_list_size,
+		enum target_register_class reg_class)
+{
+	if (target->type->get_gdb_reg_list_noread &&
+			target->type->get_gdb_reg_list_noread(target, reg_list,
+				reg_list_size, reg_class) == ERROR_OK)
+		return ERROR_OK;
+	return target_get_gdb_reg_list(target, reg_list, reg_list_size, reg_class);
+}
+
 bool target_supports_gdb_connection(struct target *target)
 {
 	/*
@@ -1593,8 +1604,9 @@ int target_call_event_callbacks(struct target *target, enum target_event event)
 		target_call_event_callbacks(target, TARGET_EVENT_GDB_HALT);
 	}
 
-	LOG_DEBUG("target event %i (%s)", event,
-			Jim_Nvp_value2name_simple(nvp_target_event, event)->name);
+	LOG_DEBUG("target event %i (%s) for core %d", event,
+			Jim_Nvp_value2name_simple(nvp_target_event, event)->name,
+			target->coreid);
 
 	target_handle_event(target, event);
 
@@ -2824,6 +2836,7 @@ COMMAND_HANDLER(handle_reg_command)
 	struct reg *reg = NULL;
 	unsigned count = 0;
 	char *value;
+	int retval;
 
 	LOG_DEBUG("-");
 
@@ -2845,21 +2858,23 @@ COMMAND_HANDLER(handle_reg_command)
 				if (reg->exist == false)
 					continue;
 				/* only print cached values if they are valid */
-				if (reg->valid) {
-					value = buf_to_str(reg->value,
-							reg->size, 16);
-					command_print(CMD_CTX,
-							"(%i) %s (/%" PRIu32 "): 0x%s%s",
-							count, reg->name,
-							reg->size, value,
-							reg->dirty
+				if (reg->exist) {
+					if (reg->valid) {
+						value = buf_to_str(reg->value,
+								reg->size, 16);
+						command_print(CMD_CTX,
+								"(%i) %s (/%" PRIu32 "): 0x%s%s",
+								count, reg->name,
+								reg->size, value,
+								reg->dirty
 								? " (dirty)"
 								: "");
-					free(value);
-				} else {
-					command_print(CMD_CTX, "(%i) %s (/%" PRIu32 ")",
-							  count, reg->name,
-							  reg->size) ;
+						free(value);
+					} else {
+						command_print(CMD_CTX, "(%i) %s (/%" PRIu32 ")",
+								count, reg->name,
+								reg->size) ;
+					}
 				}
 			}
 			cache = cache->next;
@@ -2912,8 +2927,13 @@ COMMAND_HANDLER(handle_reg_command)
 		if ((CMD_ARGC == 2) && (strcmp(CMD_ARGV[1], "force") == 0))
 			reg->valid = 0;
 
-		if (reg->valid == 0)
-			reg->type->get(reg);
+		if (reg->valid == 0) {
+			retval = reg->type->get(reg);
+			if (retval != ERROR_OK) {
+			    LOG_DEBUG("Couldn't get register %s.", reg->name);
+			    return retval;
+			}
+		}
 		value = buf_to_str(reg->value, reg->size, 16);
 		command_print(CMD_CTX, "%s (/%i): 0x%s", reg->name, (int)(reg->size), value);
 		free(value);
@@ -2927,7 +2947,12 @@ COMMAND_HANDLER(handle_reg_command)
 			return ERROR_FAIL;
 		str_to_buf(CMD_ARGV[1], strlen(CMD_ARGV[1]), buf, reg->size, 0);
 
-		reg->type->set(reg, buf);
+		retval = reg->type->set(reg, buf);
+		if (retval != ERROR_OK) {
+			LOG_DEBUG("Couldn't set register %s.", reg->name);
+			free(buf);
+			return retval;
+		}
 
 		value = buf_to_str(reg->value, reg->size, 16);
 		command_print(CMD_CTX, "%s (/%i): 0x%s", reg->name, (int)(reg->size), value);
@@ -5825,6 +5850,7 @@ static int jim_target_smp(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 	int i;
 	const char *targetname;
 	int retval, len;
+	static int smp_group = 1;
 	struct target *target = (struct target *) NULL;
 	struct target_list *head, *curr, *new;
 	curr = (struct target_list *) NULL;
@@ -5860,10 +5886,11 @@ static int jim_target_smp(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 
 	while (curr != (struct target_list *)NULL) {
 		target = curr->target;
-		target->smp = 1;
+		target->smp = smp_group;
 		target->head = head;
 		curr = curr->next;
 	}
+	smp_group++;
 
 	if (target && target->rtos)
 		retval = rtos_smp_init(head->target);

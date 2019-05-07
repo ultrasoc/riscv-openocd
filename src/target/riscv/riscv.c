@@ -170,6 +170,44 @@ struct scan_field select_idcode = {
 	.out_value = ir_idcode
 };
 
+
+int bscan_tunnel_ir_width; /* if zero, then tunneling is not present/active */
+uint8_t bscan_zero[4] = {0};
+uint8_t bscan_one[4] = {1};
+
+uint8_t ir_user4[4] = {0x23};
+struct scan_field select_user4 = {
+	.in_value = NULL,
+	.out_value = ir_user4
+};
+
+
+uint8_t bscan_tunneled_ir_width[4] = {5};  /* overridden by assignment in riscv_init_target */
+struct scan_field _bscan_tunneled_select_dmi[] = {
+		{
+			.num_bits = 1,
+			.out_value = bscan_zero,
+			.in_value = NULL,
+		},
+		{
+			.num_bits = 7,
+			.out_value = bscan_tunneled_ir_width,
+			.in_value = NULL,
+		},
+		{
+			.num_bits = 0, /* initialized in riscv_init_target to ir width of DM */
+			.out_value = ir_dbus,
+			.in_value = NULL,
+		},
+		{
+			.num_bits = 3,
+			.out_value = bscan_zero,
+			.in_value = NULL,
+		}
+};
+struct scan_field *bscan_tunneled_select_dmi = _bscan_tunneled_select_dmi;
+uint32_t bscan_tunneled_select_dmi_num_fields = DIM(_bscan_tunneled_select_dmi);
+
 struct trigger {
 	uint64_t address;
 	uint32_t length;
@@ -199,11 +237,102 @@ range_t *expose_csr;
 /* Same, but for custom registers. */
 range_t *expose_custom;
 
+static int riscv_resume_go_all_harts(struct target *target);
+
+void select_dmi_via_bscan(struct target *target)
+{
+	jtag_add_ir_scan(target->tap, &select_user4, TAP_IDLE);
+	jtag_add_dr_scan(target->tap, bscan_tunneled_select_dmi_num_fields, bscan_tunneled_select_dmi, TAP_IDLE);
+}
+
+
+uint32_t dtmcontrol_scan_via_bscan(struct target *target, uint32_t out)
+{
+	/* On BSCAN TAP: Select IR=USER4, issue tunneled IR scan via BSCAN TAP's DR */
+	uint8_t tunneled_ir_width[4] = {bscan_tunnel_ir_width};
+	uint8_t tunneled_dr_width[4] = {32};
+	uint8_t out_value[5] = {0};
+	uint8_t in_value[5] = {0};
+
+	buf_set_u32(out_value, 0, 32, out);
+
+	struct scan_field tunneled_ir[] = {
+		{
+			.num_bits = 1,
+			.out_value = bscan_zero,
+			.in_value = NULL,
+		},
+		{
+			.num_bits = 7,
+			.out_value = tunneled_ir_width,
+			.in_value = NULL,
+		},
+		{
+			.num_bits = bscan_tunnel_ir_width,
+			.out_value = ir_dtmcontrol,
+			.in_value = NULL,
+		},
+		{
+			.num_bits = 3,
+			.out_value = bscan_zero,
+			.in_value = NULL,
+		}
+	};
+	struct scan_field tunneled_dr[] = {
+		{
+			.num_bits = 1,
+			.out_value = bscan_one,
+			.in_value = NULL,
+		},
+		{
+			.num_bits = 7,
+			.out_value = tunneled_dr_width,
+			.in_value = NULL,
+		},
+		/* for BSCAN tunnel, there is a one-TCK skew between shift in and shift out,
+		   so scanning 33 bits and then right shifting the in_value after the scan is completed */
+		{
+			.num_bits = 32+1,
+			.out_value = out_value,
+			.in_value = in_value,
+		},
+		{
+			.num_bits = 3,
+			.out_value = bscan_zero,
+			.in_value = NULL,
+		}
+	};
+
+	jtag_add_ir_scan(target->tap, &select_user4, TAP_IDLE);
+	jtag_add_dr_scan(target->tap, DIM(tunneled_ir), tunneled_ir, TAP_IDLE);
+	jtag_add_dr_scan(target->tap, DIM(tunneled_dr), tunneled_dr, TAP_IDLE);
+	select_dmi_via_bscan(target);
+
+	int retval = jtag_execute_queue();
+	if (retval != ERROR_OK) {
+		LOG_ERROR("failed jtag scan: %d", retval);
+		return retval;
+	}
+
+	/* Note the starting offset is bit 1, not bit 0.  In BSCAN tunnel, there is a one-bit TCK skew between
+	   output and input */
+	uint32_t in = buf_get_u32(in_value, 1, 32);
+	LOG_DEBUG("DTMCS: 0x%x -> 0x%x", out, in);
+
+	return in;
+}
+
+
+
 static uint32_t dtmcontrol_scan(struct target *target, uint32_t out)
 {
 	struct scan_field field;
 	uint8_t in_value[4];
 	uint8_t out_value[4];
+
+	if (bscan_tunnel_ir_width != 0)
+		return dtmcontrol_scan_via_bscan(target, out);
+
 
 	buf_set_u32(out_value, 0, 32, out);
 
@@ -263,6 +392,12 @@ static int riscv_init_target(struct command_context *cmd_ctx,
 	select_dtmcontrol.num_bits = target->tap->ir_length;
 	select_dbus.num_bits = target->tap->ir_length;
 	select_idcode.num_bits = target->tap->ir_length;
+
+	if (bscan_tunnel_ir_width != 0) {
+		select_user4.num_bits = target->tap->ir_length;
+		bscan_tunneled_ir_width[0] = bscan_tunnel_ir_width;
+		bscan_tunneled_select_dmi[2].num_bits = bscan_tunnel_ir_width;
+	}
 
 	riscv_semihosting_init(target);
 
@@ -853,16 +988,116 @@ static int riscv_deassert_reset(struct target *target)
 	return tt->deassert_reset(target);
 }
 
-
-static int oldriscv_resume(struct target *target, int current, uint32_t address,
-		int handle_breakpoints, int debug_execution)
+int riscv_resume_prep_all_harts(struct target *target)
 {
-	struct target_type *tt = get_target_type(target);
-	return tt->resume(target, current, address, handle_breakpoints,
-			debug_execution);
+	RISCV_INFO(r);
+	for (int i = 0; i < riscv_count_harts(target); ++i) {
+		if (!riscv_hart_enabled(target, i))
+			continue;
+
+		LOG_DEBUG("prep hart %d", i);
+		if (riscv_set_current_hartid(target, i) != ERROR_OK)
+			return ERROR_FAIL;
+		if (riscv_is_halted(target)) {
+			if (r->resume_prep(target) != ERROR_OK)
+				return ERROR_FAIL;
+		} else {
+			LOG_DEBUG("  hart %d requested resume, but was already resumed", i);
+		}
+	}
+	return ERROR_OK;
 }
 
-static int old_or_new_riscv_resume(
+/**
+ * Get everything ready to resume.
+ */
+static int resume_prep(struct target *target, int current,
+		target_addr_t address, int handle_breakpoints, int debug_execution)
+{
+	RISCV_INFO(r);
+	LOG_DEBUG("[%d]", target->coreid);
+
+	if (!current)
+		riscv_set_register(target, GDB_REGNO_PC, address);
+
+	if (target->debug_reason == DBG_REASON_WATCHPOINT) {
+		/* To be able to run off a trigger, disable all the triggers, step, and
+		 * then resume as usual. */
+		struct watchpoint *watchpoint = target->watchpoints;
+		bool trigger_temporarily_cleared[RISCV_MAX_HWBPS] = {0};
+
+		int i = 0;
+		int result = ERROR_OK;
+		while (watchpoint && result == ERROR_OK) {
+			LOG_DEBUG("watchpoint %d: set=%d", i, watchpoint->set);
+			trigger_temporarily_cleared[i] = watchpoint->set;
+			if (watchpoint->set)
+				result = riscv_remove_watchpoint(target, watchpoint);
+			watchpoint = watchpoint->next;
+			i++;
+		}
+
+		if (result == ERROR_OK)
+			result = old_or_new_riscv_step(target, true, 0, false);
+
+		watchpoint = target->watchpoints;
+		i = 0;
+		while (watchpoint) {
+			LOG_DEBUG("watchpoint %d: cleared=%d", i, trigger_temporarily_cleared[i]);
+			if (trigger_temporarily_cleared[i]) {
+				if (result == ERROR_OK)
+					result = riscv_add_watchpoint(target, watchpoint);
+				else
+					riscv_add_watchpoint(target, watchpoint);
+			}
+			watchpoint = watchpoint->next;
+			i++;
+		}
+
+		if (result != ERROR_OK)
+			return result;
+	}
+
+	if (r->is_halted) {
+		if (riscv_resume_prep_all_harts(target) != ERROR_OK)
+			return ERROR_FAIL;
+	}
+
+	LOG_DEBUG("[%d] mark as prepped", target->coreid);
+	r->prepped = true;
+
+	return ERROR_OK;
+}
+
+/**
+ * Resume all the harts that have been prepped, as close to instantaneous as
+ * possible.
+ */
+static int resume_go(struct target *target, int current,
+		target_addr_t address, int handle_breakpoints, int debug_execution)
+{
+	riscv_info_t *r = riscv_info(target);
+	int result;
+	if (r->is_halted == NULL) {
+		struct target_type *tt = get_target_type(target);
+		result = tt->resume(target, current, address, handle_breakpoints,
+				debug_execution);
+	} else {
+		result = riscv_resume_go_all_harts(target);
+	}
+
+	return result;
+}
+
+static int resume_finish(struct target *target)
+{
+	register_cache_invalidate(target->reg_cache);
+
+	target->state = TARGET_RUNNING;
+	return target_call_event_callbacks(target, TARGET_EVENT_RESUMED);
+}
+
+int riscv_resume(
 		struct target *target,
 		int current,
 		target_addr_t address,
@@ -870,31 +1105,43 @@ static int old_or_new_riscv_resume(
 		int debug_execution
 ){
 	LOG_DEBUG("handle_breakpoints=%d", handle_breakpoints);
+	int result = ERROR_OK;
 	if (target->smp) {
-		struct target_list *targets = target->head;
-		int result = ERROR_OK;
-		while (targets) {
-			struct target *t = targets->target;
-			riscv_info_t *r = riscv_info(t);
-			if (r->is_halted == NULL) {
-				if (oldriscv_resume(t, current, address, handle_breakpoints,
+		for (struct target_list *tlist = target->head; tlist; tlist = tlist->next) {
+			struct target *t = tlist->target;
+			if (resume_prep(t, current, address, handle_breakpoints,
+						debug_execution) != ERROR_OK)
+				result = ERROR_FAIL;
+		}
+
+		for (struct target_list *tlist = target->head; tlist; tlist = tlist->next) {
+			struct target *t = tlist->target;
+			riscv_info_t *i = riscv_info(t);
+			if (i->prepped) {
+				if (resume_go(t, current, address, handle_breakpoints,
 							debug_execution) != ERROR_OK)
 					result = ERROR_FAIL;
-			} else {
-				if (riscv_openocd_resume(t, current, address,
-							handle_breakpoints, debug_execution) != ERROR_OK)
-					result = ERROR_FAIL;
 			}
-			targets = targets->next;
 		}
-		return result;
+
+		for (struct target_list *tlist = target->head; tlist; tlist = tlist->next) {
+			struct target *t = tlist->target;
+			if (resume_finish(t) != ERROR_OK)
+				return ERROR_FAIL;
+		}
+
+	} else {
+		if (resume_prep(target, current, address, handle_breakpoints,
+					debug_execution) != ERROR_OK)
+			result = ERROR_FAIL;
+		if (resume_go(target, current, address, handle_breakpoints,
+					debug_execution) != ERROR_OK)
+			result = ERROR_FAIL;
+		if (resume_finish(target) != ERROR_OK)
+			return ERROR_FAIL;
 	}
 
-	RISCV_INFO(r);
-	if (r->is_halted == NULL)
-		return oldriscv_resume(target, current, address, handle_breakpoints, debug_execution);
-	else
-		return riscv_openocd_resume(target, current, address, handle_breakpoints, debug_execution);
+	return result;
 }
 
 static int riscv_select_current_hart(struct target *target)
@@ -965,15 +1212,19 @@ static int riscv_get_gdb_reg_list_internal(struct target *target,
 		if (read && !target->reg_cache->reg_list[i].valid) {
 			if (target->reg_cache->reg_list[i].type->get(
 						&target->reg_cache->reg_list[i]) != ERROR_OK)
-				/* This function is called when first connecting to gdb,
-				 * resulting in an attempt to read all kinds of registers which
-				 * probably will fail. Ignore these failures, and when
-				 * encountered stop reading to save time. */
-				read = false;
+				return ERROR_FAIL;
 		}
 	}
 
 	return ERROR_OK;
+}
+
+static int riscv_get_gdb_reg_list_noread(struct target *target,
+		struct reg **reg_list[], int *reg_list_size,
+		enum target_register_class reg_class)
+{
+	return riscv_get_gdb_reg_list_internal(target, reg_list, reg_list_size,
+			reg_class, false);
 }
 
 static int riscv_get_gdb_reg_list(struct target *target,
@@ -1067,7 +1318,7 @@ static int riscv_run_algorithm(struct target *target, int num_mem_params,
 
 	/* Run algorithm */
 	LOG_DEBUG("resume at 0x%" TARGET_PRIxADDR, entry_point);
-	if (oldriscv_resume(target, 0, entry_point, 0, 0) != ERROR_OK)
+	if (riscv_resume(target, 0, entry_point, 0, 0) != ERROR_OK)
 		return ERROR_FAIL;
 
 	int64_t start = timeval_ms();
@@ -1349,68 +1600,6 @@ int riscv_openocd_halt(struct target *target)
 	target->debug_reason = DBG_REASON_DBGRQ;
 	target_call_event_callbacks(target, TARGET_EVENT_HALTED);
 	return result;
-}
-
-int riscv_openocd_resume(
-		struct target *target,
-		int current,
-		target_addr_t address,
-		int handle_breakpoints,
-		int debug_execution)
-{
-	LOG_DEBUG("debug_reason=%d", target->debug_reason);
-
-	if (!current)
-		riscv_set_register(target, GDB_REGNO_PC, address);
-
-	if (target->debug_reason == DBG_REASON_WATCHPOINT) {
-		/* To be able to run off a trigger, disable all the triggers, step, and
-		 * then resume as usual. */
-		struct watchpoint *watchpoint = target->watchpoints;
-		bool trigger_temporarily_cleared[RISCV_MAX_HWBPS] = {0};
-
-		int i = 0;
-		int result = ERROR_OK;
-		while (watchpoint && result == ERROR_OK) {
-			LOG_DEBUG("watchpoint %d: set=%d", i, watchpoint->set);
-			trigger_temporarily_cleared[i] = watchpoint->set;
-			if (watchpoint->set)
-				result = riscv_remove_watchpoint(target, watchpoint);
-			watchpoint = watchpoint->next;
-			i++;
-		}
-
-		if (result == ERROR_OK)
-			result = riscv_step_rtos_hart(target);
-
-		watchpoint = target->watchpoints;
-		i = 0;
-		while (watchpoint) {
-			LOG_DEBUG("watchpoint %d: cleared=%d", i, trigger_temporarily_cleared[i]);
-			if (trigger_temporarily_cleared[i]) {
-				if (result == ERROR_OK)
-					result = riscv_add_watchpoint(target, watchpoint);
-				else
-					riscv_add_watchpoint(target, watchpoint);
-			}
-			watchpoint = watchpoint->next;
-			i++;
-		}
-
-		if (result != ERROR_OK)
-			return result;
-	}
-
-	int out = riscv_resume_all_harts(target);
-	if (out != ERROR_OK) {
-		LOG_ERROR("unable to resume all harts");
-		return out;
-	}
-
-	register_cache_invalidate(target->reg_cache);
-	target->state = TARGET_RUNNING;
-	target_call_event_callbacks(target, TARGET_EVENT_RESUMED);
-	return out;
 }
 
 int riscv_openocd_step(
@@ -1778,6 +1967,23 @@ COMMAND_HANDLER(riscv_set_ir)
 	}
 }
 
+COMMAND_HANDLER(riscv_use_bscan_tunnel)
+{
+	int irwidth = 0;
+
+	if (CMD_ARGC > 1) {
+		LOG_ERROR("Command takes at most one argument");
+		return ERROR_COMMAND_SYNTAX_ERROR;
+	}
+
+	if (CMD_ARGC == 1)
+		COMMAND_PARSE_NUMBER(int, CMD_ARGV[0], irwidth);
+
+	bscan_tunnel_ir_width = irwidth;
+	return ERROR_OK;
+}
+
+
 static const struct command_registration riscv_exec_command_handlers[] = {
 	{
 		.name = "test_compliance",
@@ -1884,6 +2090,15 @@ static const struct command_registration riscv_exec_command_handlers[] = {
 		.usage = "riscv set_ir_idcode [idcode|dtmcs|dmi] value",
 		.help = "Set IR value for specified JTAG register."
 	},
+	{
+		.name = "use_bscan_tunnel",
+		.handler = riscv_use_bscan_tunnel,
+		.mode = COMMAND_ANY,
+		.usage = "riscv use_bscan_tunnel value",
+		.help = "Enable or disable use of a BSCAN tunnel to reach DM.  Supply "
+			"the width of the DM transport TAP's instruction register to "
+			"enable.  Supply a value of 0 to disable."
+	},
 	COMMAND_REGISTRATION_DONE
 };
 
@@ -1971,7 +2186,7 @@ struct target_type riscv_target = {
 	.poll = old_or_new_riscv_poll,
 
 	.halt = old_or_new_riscv_halt,
-	.resume = old_or_new_riscv_resume,
+	.resume = riscv_resume,
 	.step = old_or_new_riscv_step,
 
 	.assert_reset = riscv_assert_reset,
@@ -1983,6 +2198,7 @@ struct target_type riscv_target = {
 	.checksum_memory = riscv_checksum_memory,
 
 	.get_gdb_reg_list = riscv_get_gdb_reg_list,
+	.get_gdb_reg_list_noread = riscv_get_gdb_reg_list_noread,
 
 	.add_breakpoint = riscv_add_breakpoint,
 	.remove_breakpoint = riscv_remove_breakpoint,
@@ -2049,32 +2265,26 @@ int riscv_halt_one_hart(struct target *target, int hartid)
 	return result;
 }
 
-int riscv_resume_all_harts(struct target *target)
+static int riscv_resume_go_all_harts(struct target *target)
 {
+	RISCV_INFO(r);
 	for (int i = 0; i < riscv_count_harts(target); ++i) {
 		if (!riscv_hart_enabled(target, i))
 			continue;
 
-		riscv_resume_one_hart(target, i);
+		LOG_DEBUG("resuming hart %d", i);
+		if (riscv_set_current_hartid(target, i) != ERROR_OK)
+			return ERROR_FAIL;
+		if (riscv_is_halted(target)) {
+			if (r->resume_go(target) != ERROR_OK)
+				return ERROR_FAIL;
+		} else {
+			LOG_DEBUG("  hart %d requested resume, but was already resumed", i);
+		}
 	}
 
 	riscv_invalidate_register_cache(target);
 	return ERROR_OK;
-}
-
-int riscv_resume_one_hart(struct target *target, int hartid)
-{
-	RISCV_INFO(r);
-	LOG_DEBUG("resuming hart %d", hartid);
-	if (riscv_set_current_hartid(target, hartid) != ERROR_OK)
-		return ERROR_FAIL;
-	if (!riscv_is_halted(target)) {
-		LOG_DEBUG("  hart %d requested resume, but was already resumed", hartid);
-		return ERROR_OK;
-	}
-
-	r->on_resume(target);
-	return r->resume_current_hart(target);
 }
 
 int riscv_step_rtos_hart(struct target *target)
@@ -2137,7 +2347,7 @@ int riscv_xlen_of_hart(const struct target *target, int hartid)
 extern struct rtos_type riscv_rtos;
 bool riscv_rtos_enabled(const struct target *target)
 {
-	return false;
+	return target->rtos && target->rtos->type == &riscv_rtos;
 }
 
 int riscv_set_current_hartid(struct target *target, int hartid)
@@ -2199,9 +2409,9 @@ int riscv_count_harts(struct target *target)
 	if (target == NULL)
 		return 1;
 	RISCV_INFO(r);
-	if (r == NULL)
+	if (r == NULL || r->hart_count == NULL)
 		return 1;
-	return r->hart_count;
+	return r->hart_count(target);
 }
 
 bool riscv_has_register(struct target *target, int hartid, int regid)
