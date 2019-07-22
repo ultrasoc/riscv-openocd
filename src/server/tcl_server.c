@@ -157,7 +157,7 @@ static int tcl_new_connection(struct connection *connection)
 
 	connection->priv = tclc;
 
-	struct target *target = get_current_target(connection->cmd_ctx);
+	struct target *target = get_current_target_or_null(connection->cmd_ctx);
 	if (target != NULL)
 		tclc->tc_laststate = target->state;
 
@@ -246,7 +246,7 @@ static int tcl_input(struct connection *connection)
 			retval = tcl_output(connection, result, reslen);
 			if (retval != ERROR_OK)
 				return retval;
-			/* Always output ctrl-d as end of line to allow multiline results */
+			/* Always output ctrl-z as end of line to allow multiline results */
 			tcl_output(connection, "\x1a", 1);
 		}
 

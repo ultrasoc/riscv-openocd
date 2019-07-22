@@ -165,12 +165,13 @@ static const struct samd_part samd21_parts[] = {
 	{ 0xE, "SAMD21E14A", 16, 2 },
 
     /* SAMR21 parts have integrated SAMD21 with a radio */
+	{ 0x18, "SAMR21G19A", 256, 32 }, /* with 512k of serial flash */
 	{ 0x19, "SAMR21G18A", 256, 32 },
 	{ 0x1A, "SAMR21G17A", 128, 32 },
-	{ 0x1B, "SAMR21G16A",  64, 32 },
+	{ 0x1B, "SAMR21G16A",  64, 16 },
 	{ 0x1C, "SAMR21E18A", 256, 32 },
 	{ 0x1D, "SAMR21E17A", 128, 32 },
-	{ 0x1E, "SAMR21E16A",  64, 32 },
+	{ 0x1E, "SAMR21E16A",  64, 16 },
 
     /* SAMD21 B Variants (Table 3-7 from rev I of datasheet) */
 	{ 0x20, "SAMD21J16B", 64, 8 },
@@ -179,6 +180,28 @@ static const struct samd_part samd21_parts[] = {
 	{ 0x24, "SAMD21G15B", 32, 4 },
 	{ 0x26, "SAMD21E16B", 64, 8 },
 	{ 0x27, "SAMD21E15B", 32, 4 },
+
+	/* Known SAMDA1 parts.
+	   SAMD-A1 series uses the same series identifier like the SAMD21
+	   taken from http://ww1.microchip.com/downloads/en/DeviceDoc/40001895A.pdf (pages 14-17) */
+	{ 0x29, "SAMDA1J16A", 64, 8 },
+	{ 0x2A, "SAMDA1J15A", 32, 4 },
+	{ 0x2B, "SAMDA1J14A", 16, 4 },
+	{ 0x2C, "SAMDA1G16A", 64, 8 },
+	{ 0x2D, "SAMDA1G15A", 32, 4 },
+	{ 0x2E, "SAMDA1G14A", 16, 4 },
+	{ 0x2F, "SAMDA1E16A", 64, 8 },
+	{ 0x30, "SAMDA1E15A", 32, 4 },
+	{ 0x31, "SAMDA1E14A", 16, 4 },
+	{ 0x64, "SAMDA1J16B", 64, 8 },
+	{ 0x65, "SAMDA1J15B", 32, 4 },
+	{ 0x66, "SAMDA1J14B", 16, 4 },
+	{ 0x67, "SAMDA1G16B", 64, 8 },
+	{ 0x68, "SAMDA1G15B", 32, 4 },
+	{ 0x69, "SAMDA1G14B", 16, 4 },
+	{ 0x6A, "SAMDA1E16B", 64, 8 },
+	{ 0x6B, "SAMDA1E15B", 32, 4 },
+	{ 0x6C, "SAMDA1E14B", 16, 4 },
 };
 
 /* Known SAML21 parts. */
@@ -207,6 +230,9 @@ static const struct samd_part saml21_parts[] = {
     /* SAMR30 parts have integrated SAML21 with a radio */
 	{ 0x1E, "SAMR30G18A", 256, 32 },
 	{ 0x1F, "SAMR30E18A", 256, 32 },
+
+    /* SAMR34/R35 parts have integrated SAML21 with a lora radio */
+	{ 0x28, "SAMR34J18", 256, 32 },
 };
 
 /* Known SAML22 parts. */
@@ -236,6 +262,8 @@ static const struct samd_part samc20_parts[] = {
 	{ 0x0B, "SAMC20E17A", 128, 16 },
 	{ 0x0C, "SAMC20E16A", 64, 8 },
 	{ 0x0D, "SAMC20E15A", 32, 4 },
+	{ 0x20, "SAMC20N18A", 256, 32 },
+	{ 0x21, "SAMC20N17A", 128, 16 },
 };
 
 /* Known SAMC21 parts. */
@@ -252,6 +280,8 @@ static const struct samd_part samc21_parts[] = {
 	{ 0x0B, "SAMC21E17A", 128, 16 },
 	{ 0x0C, "SAMC21E16A", 64, 8 },
 	{ 0x0D, "SAMC21E15A", 32, 4 },
+	{ 0x20, "SAMC21N18A", 256, 32 },
+	{ 0x21, "SAMC21N17A", 128, 16 },
 };
 
 /* Each family of parts contains a parts table in the DEVSEL field of DID.  The
@@ -876,7 +906,8 @@ free_pb:
 FLASH_BANK_COMMAND_HANDLER(samd_flash_bank_command)
 {
 	if (bank->base != SAMD_FLASH) {
-		LOG_ERROR("Address 0x%08" PRIx32 " invalid bank address (try 0x%08" PRIx32
+		LOG_ERROR("Address " TARGET_ADDR_FMT
+				" invalid bank address (try 0x%08" PRIx32
 				"[at91samd series] )",
 				bank->base, SAMD_FLASH);
 		return ERROR_FAIL;
@@ -1186,7 +1217,8 @@ static const struct command_registration at91samd_exec_command_handlers[] = {
 		.name = "dsu_reset_deassert",
 		.handler = samd_handle_reset_deassert,
 		.mode = COMMAND_EXEC,
-		.help = "Deasert internal reset held by DSU."
+		.help = "Deassert internal reset held by DSU.",
+		.usage = "",
 	},
 	{
 		.name = "info",
@@ -1194,6 +1226,7 @@ static const struct command_registration at91samd_exec_command_handlers[] = {
 		.mode = COMMAND_EXEC,
 		.help = "Print information about the current at91samd chip "
 			"and its flash configuration.",
+		.usage = "",
 	},
 	{
 		.name = "chip-erase",
@@ -1201,6 +1234,7 @@ static const struct command_registration at91samd_exec_command_handlers[] = {
 		.mode = COMMAND_EXEC,
 		.help = "Erase the entire Flash by using the Chip-"
 			"Erase feature in the Device Service Unit (DSU).",
+		.usage = "",
 	},
 	{
 		.name = "set-security",
@@ -1210,6 +1244,7 @@ static const struct command_registration at91samd_exec_command_handlers[] = {
 			"This makes it impossible to read the Flash contents. "
 			"The only way to undo this is to issue the chip-erase "
 			"command.",
+		.usage = "'enable'",
 	},
 	{
 		.name = "eeprom",
@@ -1256,7 +1291,7 @@ static const struct command_registration at91samd_command_handlers[] = {
 	COMMAND_REGISTRATION_DONE
 };
 
-struct flash_driver at91samd_flash = {
+const struct flash_driver at91samd_flash = {
 	.name = "at91samd",
 	.commands = at91samd_command_handlers,
 	.flash_bank_command = samd_flash_bank_command,

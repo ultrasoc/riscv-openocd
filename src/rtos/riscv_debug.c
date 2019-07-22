@@ -3,9 +3,11 @@
 #endif
 
 #include "riscv_debug.h"
+#include "target/register.h"
 #include "target/target.h"
 #include "target/riscv/riscv.h"
 #include "server/gdb_server.h"
+#include "helper/binarybuffer.h"
 
 static int riscv_gdb_thread_packet(struct connection *connection, const char *packet, int packet_size);
 static int riscv_gdb_v_packet(struct connection *connection, const char *packet, int packet_size);
@@ -174,6 +176,7 @@ static int riscv_gdb_thread_packet(struct connection *connection, const char *pa
 			break;
 		default:
 			riscv_set_rtos_hartid(target, tid - 1);
+			rtos->current_threadid = tid;
 			break;
 		}
 
@@ -256,7 +259,7 @@ static int riscv_gdb_v_packet(struct connection *connection, const char *packet,
 		target_call_event_callbacks(target, TARGET_EVENT_GDB_START);
 		target_call_event_callbacks(target, TARGET_EVENT_RESUME_START);
 		riscv_set_all_rtos_harts(target);
-		riscv_openocd_resume(target, 1, 0, 0, 0);
+		riscv_resume(target, 1, 0, 0, 0);
 		target->state = TARGET_RUNNING;
 		gdb_set_frontend_state_running(connection);
 		target_call_event_callbacks(target, TARGET_EVENT_RESUMED);
@@ -270,40 +273,63 @@ static int riscv_gdb_v_packet(struct connection *connection, const char *packet,
 	return GDB_THREAD_PACKET_NOT_CONSUMED;
 }
 
-static int riscv_get_thread_reg_list(struct rtos *rtos, int64_t thread_id, char **hex_reg_list)
+static int riscv_get_thread_reg(struct rtos *rtos, int64_t thread_id,
+		uint32_t reg_num, struct rtos_reg *rtos_reg)
+{
+	LOG_DEBUG("thread_id=%" PRId64 ", reg_num=%d", thread_id, reg_num);
+
+	struct target *target = rtos->target;
+	struct reg *reg = register_get_by_number(target->reg_cache, reg_num, true);
+	if (!reg)
+		return ERROR_FAIL;
+
+	uint64_t reg_value = 0;
+	if (riscv_get_register_on_hart(rtos->target, &reg_value, thread_id - 1,
+				reg_num) != ERROR_OK)
+		return ERROR_FAIL;
+
+	buf_set_u64(rtos_reg->value, 0, 64, reg_value);
+	rtos_reg->number = reg->number;
+	rtos_reg->size = reg->size;
+	return ERROR_OK;
+}
+
+static int riscv_get_thread_reg_list(struct rtos *rtos, int64_t thread_id,
+		struct rtos_reg **reg_list, int *num_regs)
 {
 	LOG_DEBUG("Updating RISC-V register list for hart %d", (int)(thread_id - 1));
 
-	size_t n_regs = 32;
-	size_t xlen = 64;
-	size_t reg_chars = xlen / 8 * 2;
+	/* We return just the GPRs here. */
 
-	ssize_t hex_reg_list_length = n_regs * reg_chars + 2;
-	*hex_reg_list = malloc(hex_reg_list_length);
-	*hex_reg_list[0] = '\0';
-	char *p = hex_reg_list[0];
-	for (size_t i = 0; i < n_regs; ++i) {
-		assert(p - hex_reg_list[0] > 3);
-		if (riscv_has_register(rtos->target, thread_id, i)) {
-			uint64_t reg_value;
-			int result = riscv_get_register_on_hart(rtos->target, &reg_value,
-					thread_id - 1, i);
-			if (result != ERROR_OK)
-				return JIM_ERR;
+	*num_regs = 33;
+	int xlen = riscv_xlen_of_hart(rtos->target, thread_id - 1);
 
-			for (size_t byte = 0; byte < xlen / 8; ++byte) {
-				uint8_t reg_byte = reg_value >> (byte * 8);
-				p += snprintf(p, 3, "%02x", reg_byte);
-			}
-		} else {
-			for (size_t byte = 0; byte < xlen / 8; ++byte) {
-				strcpy(p, "xx");
-				p += 2;
-			}
-		}
+	*reg_list = calloc(*num_regs, sizeof(struct rtos_reg));
+	for (int i = 0; i < *num_regs; ++i) {
+		uint64_t reg_value;
+		if (riscv_get_register_on_hart(rtos->target, &reg_value, thread_id - 1,
+					i) != ERROR_OK)
+			return JIM_ERR;
+
+		(*reg_list)[i].number = i;
+		(*reg_list)[i].size = xlen;
+		buf_set_u64((*reg_list)[i].value, 0, 64, reg_value);
 	}
-	LOG_DEBUG("%s", *hex_reg_list);
 	return JIM_OK;
+}
+
+static int riscv_set_reg(struct rtos *rtos, uint32_t reg_num,
+		uint8_t *reg_value)
+{
+	struct target *target = rtos->target;
+	struct reg *reg = register_get_by_number(target->reg_cache, reg_num, true);
+	if (!reg)
+		return ERROR_FAIL;
+
+	int hartid = rtos->current_threadid - 1;
+	uint64_t value = buf_get_u64(reg_value, 0, reg->size);
+
+	return riscv_set_register_on_hart(target, hartid, reg_num, value);
 }
 
 static int riscv_get_symbol_list_to_lookup(symbol_table_elem_t *symbol_list[])
@@ -319,6 +345,8 @@ const struct rtos_type riscv_rtos = {
 	.detect_rtos = riscv_detect_rtos,
 	.create = riscv_create_rtos,
 	.update_threads = riscv_update_threads,
+	.get_thread_reg = riscv_get_thread_reg,
 	.get_thread_reg_list = riscv_get_thread_reg_list,
 	.get_symbol_list_to_lookup = riscv_get_symbol_list_to_lookup,
+	.set_reg = riscv_set_reg,
 };

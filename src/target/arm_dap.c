@@ -50,7 +50,7 @@ static void dap_instance_init(struct adiv5_dap *dap)
 {
 	int i;
 	/* Set up with safe defaults */
-	for (i = 0; i <= 255; i++) {
+	for (i = 0; i <= DP_APSEL_MAX; i++) {
 		dap->ap[i].dap = dap;
 		dap->ap[i].ap_num = i;
 		/* memaccess_tck max is 255 */
@@ -324,13 +324,18 @@ COMMAND_HANDLER(handle_dap_info_command)
 	struct adiv5_dap *dap = arm->dap;
 	uint32_t apsel;
 
+	if (dap == NULL) {
+		LOG_ERROR("DAP instance not available. Probably a HLA target...");
+		return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
+	}
+
 	switch (CMD_ARGC) {
 		case 0:
 			apsel = dap->apsel;
 			break;
 		case 1:
 			COMMAND_PARSE_NUMBER(u32, CMD_ARGV[0], apsel);
-			if (apsel >= 256)
+			if (apsel > DP_APSEL_MAX)
 				return ERROR_COMMAND_SYNTAX_ERROR;
 			break;
 		default:
@@ -379,6 +384,7 @@ static const struct command_registration dap_commands[] = {
 		.mode = COMMAND_CONFIG,
 		.help = "DAP commands",
 		.chain = dap_subcommand_handlers,
+		.usage = "",
 	},
 	COMMAND_REGISTRATION_DONE
 };

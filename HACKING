@@ -77,6 +77,32 @@ patch:
   src/openocd -s ../tcl -f /path/to/openocd.cfg
   @endcode
 
+- Runtime coverage testing
+
+  Apply the following patch to prevent OpenOCD from killing itself:
+  @code
+--- a/src/openocd.c
++++ b/src/openocd.c
+@@ -372,8 +372,6 @@ int openocd_main(int argc, char *argv[])
+
+        if (ERROR_FAIL == ret)
+                return EXIT_FAILURE;
+-       else if (ERROR_OK != ret)
+-               exit_on_signal(ret);
+
+        return ret;
+ }
+  @endcode
+
+  Configure your OpenOCD binary with coverage support as follows:
+  @code
+  LDFLAGS="-fprofile-arcs -ftest-coverage"
+		   CFLAGS="-fprofile-arcs -ftest-coverage" ./configure
+  @endcode
+
+  Now every time OpenOCD is run, coverage info in your build directory is
+  updated. Running `gcov src/path/file.c` will generate a report.
+
 Please consider performing these additonal checks where appropriate
 (especially Clang Static Analyzer for big portions of new code) and
 mention the results (e.g. "Valgrind-clean, no new Clang analyzer
@@ -122,18 +148,22 @@ to instruct git locally how to send off the changes.
   -# Add a new remote to git using Gerrit username:
 @code
 git remote add review ssh://USERNAME@openocd.zylin.com:29418/openocd.git
-git config remote.review.push HEAD:refs/publish/master
+git config remote.review.push HEAD:refs/for/master
 @endcode
   Or with http only:
 @code
 git remote add review http://USERNAME@openocd.zylin.com/p/openocd.git
-git config remote.review.push HEAD:refs/publish/master
+git config remote.review.push HEAD:refs/for/master
 @endcode
   The http password is configured from your gerrit settings - http://openocd.zylin.com/#/settings/http-password.
   \note If you want to simplify http access you can also add your http password to the url as follows:
 @code
 git remote add review http://USERNAME:PASSWORD@openocd.zylin.com/p/openocd.git
 @endcode
+  \note All contributions should be pushed to @c refs/for/master on the
+Gerrit server, even if you plan to use several local branches for different
+topics. It is possible because @c for/master is not a traditional Git
+branch.
   -# You will need to install this hook, we will look into a better solution:
 @code
 scp -p -P 29418 USERNAME@openocd.zylin.com:hooks/commit-msg .git/hooks/
@@ -201,7 +231,7 @@ Further reading: http://www.coreboot.org/Git
 
 The code review is intended to take as long as a week or two to allow
 maintainers and contributors who work on OpenOCD only in their spare
-time oportunity to perform a review and raise objections.
+time opportunity to perform a review and raise objections.
 
 With Gerrit much of the urgency of getting things committed has been
 removed as the work in progress is safely stored in Gerrit and

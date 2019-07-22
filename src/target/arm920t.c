@@ -283,8 +283,8 @@ static int arm920t_read_cp15_interpreted(struct target *target,
 		return ERROR_FAIL;
 	}
 
-	r[0].dirty = 1;
-	r[1].dirty = 1;
+	r[0].dirty = true;
+	r[1].dirty = true;
 
 	return ERROR_OK;
 }
@@ -327,8 +327,8 @@ int arm920t_write_cp15_interpreted(struct target *target,
 		return ERROR_FAIL;
 	}
 
-	r[0].dirty = 1;
-	r[1].dirty = 1;
+	r[0].dirty = true;
+	r[1].dirty = true;
 
 	return ERROR_OK;
 }
@@ -781,12 +781,12 @@ int arm920t_soft_reset_halt(struct target *target)
 	cpsr &= ~0xff;
 	cpsr |= 0xd3;
 	arm_set_cpsr(arm, cpsr);
-	arm->cpsr->dirty = 1;
+	arm->cpsr->dirty = true;
 
 	/* start fetching from 0x0 */
 	buf_set_u32(arm->pc->value, 0, 32, 0x0);
-	arm->pc->dirty = 1;
-	arm->pc->valid = 1;
+	arm->pc->dirty = true;
+	arm->pc->valid = true;
 
 	arm920t_disable_mmu_caches(target, 1, 1, 1);
 	arm920t->armv4_5_mmu.mmu_enabled = 0;
@@ -1693,6 +1693,7 @@ struct target_type arm920t_target = {
 	.deassert_reset = arm7_9_deassert_reset,
 	.soft_reset_halt = arm920t_soft_reset_halt,
 
+	.get_gdb_arch = arm_get_gdb_arch,
 	.get_gdb_reg_list = arm_get_gdb_reg_list,
 
 	.read_memory = arm920t_read_memory,

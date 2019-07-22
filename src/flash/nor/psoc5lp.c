@@ -753,16 +753,6 @@ static int psoc5lp_nvl_write(struct flash_bank *bank,
 	return ERROR_OK;
 }
 
-static int psoc5lp_nvl_protect_check(struct flash_bank *bank)
-{
-	int i;
-
-	for (i = 0; i < bank->num_sectors; i++)
-		bank->sectors[i].is_protected = -1;
-
-	return ERROR_OK;
-}
-
 static int psoc5lp_nvl_get_info_command(struct flash_bank *bank,
 	char *buf, int buf_size)
 {
@@ -848,14 +838,13 @@ static const struct command_registration psoc5lp_nvl_command_handlers[] = {
 	COMMAND_REGISTRATION_DONE
 };
 
-struct flash_driver psoc5lp_nvl_flash = {
+const struct flash_driver psoc5lp_nvl_flash = {
 	.name = "psoc5lp_nvl",
 	.commands = psoc5lp_nvl_command_handlers,
 	.flash_bank_command = psoc5lp_nvl_flash_bank_command,
 	.info = psoc5lp_nvl_get_info_command,
 	.probe = psoc5lp_nvl_probe,
 	.auto_probe = psoc5lp_nvl_auto_probe,
-	.protect_check = psoc5lp_nvl_protect_check,
 	.read = psoc5lp_nvl_read,
 	.erase = psoc5lp_nvl_erase,
 	.erase_check = psoc5lp_nvl_erase_check,
@@ -941,16 +930,6 @@ static int psoc5lp_eeprom_write(struct flash_bank *bank,
 		if (retval != ERROR_OK)
 			return retval;
 	}
-
-	return ERROR_OK;
-}
-
-static int psoc5lp_eeprom_protect_check(struct flash_bank *bank)
-{
-	int i;
-
-	for (i = 0; i < bank->num_sectors; i++)
-		bank->sectors[i].is_protected = -1;
 
 	return ERROR_OK;
 }
@@ -1057,14 +1036,13 @@ static const struct command_registration psoc5lp_eeprom_command_handlers[] = {
 	COMMAND_REGISTRATION_DONE
 };
 
-struct flash_driver psoc5lp_eeprom_flash = {
+const struct flash_driver psoc5lp_eeprom_flash = {
 	.name = "psoc5lp_eeprom",
 	.commands = psoc5lp_eeprom_command_handlers,
 	.flash_bank_command = psoc5lp_eeprom_flash_bank_command,
 	.info = psoc5lp_eeprom_get_info_command,
 	.probe = psoc5lp_eeprom_probe,
 	.auto_probe = psoc5lp_eeprom_auto_probe,
-	.protect_check = psoc5lp_eeprom_protect_check,
 	.read = default_flash_read,
 	.erase = psoc5lp_eeprom_erase,
 	.erase_check = default_flash_blank_check,
@@ -1249,7 +1227,7 @@ static int psoc5lp_write(struct flash_bank *bank, const uint8_t *buffer,
 			struct working_area *data_area = even_row ? even_row_area : odd_row_area;
 			unsigned len = MIN(ROW_SIZE, byte_count);
 
-			LOG_DEBUG("Writing load command for array %u row %u at 0x%08" TARGET_PRIxADDR,
+			LOG_DEBUG("Writing load command for array %u row %u at " TARGET_ADDR_FMT,
 				array_id, row, data_area->address);
 
 			psoc5lp_spc_write_opcode_buffer(target, buf, SPC_LOAD_ROW);
@@ -1570,7 +1548,7 @@ static const struct command_registration psoc5lp_command_handlers[] = {
 	COMMAND_REGISTRATION_DONE
 };
 
-struct flash_driver psoc5lp_flash = {
+const struct flash_driver psoc5lp_flash = {
 	.name = "psoc5lp",
 	.commands = psoc5lp_command_handlers,
 	.flash_bank_command = psoc5lp_flash_bank_command,

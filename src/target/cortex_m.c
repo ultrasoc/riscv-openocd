@@ -42,7 +42,7 @@
 
 /* NOTE:  most of this should work fine for the Cortex-M1 and
  * Cortex-M0 cores too, although they're ARMv6-M not ARMv7-M.
- * Some differences:  M0/M1 doesn't have FBP remapping or the
+ * Some differences:  M0/M1 doesn't have FPB remapping or the
  * DWT tracing/profiling support.  (So the cycle counter will
  * not be usable; the other stuff isn't currently used here.)
  *
@@ -134,6 +134,83 @@ static int cortex_m_write_debug_halt_mask(struct target *target,
 	cortex_m->dcb_dhcsr |= DBGKEY | C_DEBUGEN | mask_on;
 
 	return mem_ap_write_atomic_u32(armv7m->debug_ap, DCB_DHCSR, cortex_m->dcb_dhcsr);
+}
+
+static int cortex_m_set_maskints(struct target *target, bool mask)
+{
+	struct cortex_m_common *cortex_m = target_to_cm(target);
+	if (!!(cortex_m->dcb_dhcsr & C_MASKINTS) != mask)
+		return cortex_m_write_debug_halt_mask(target, mask ? C_MASKINTS : 0, mask ? 0 : C_MASKINTS);
+	else
+		return ERROR_OK;
+}
+
+static int cortex_m_set_maskints_for_halt(struct target *target)
+{
+	struct cortex_m_common *cortex_m = target_to_cm(target);
+	switch (cortex_m->isrmasking_mode) {
+		case CORTEX_M_ISRMASK_AUTO:
+			/* interrupts taken at resume, whether for step or run -> no mask */
+			return cortex_m_set_maskints(target, false);
+
+		case CORTEX_M_ISRMASK_OFF:
+			/* interrupts never masked */
+			return cortex_m_set_maskints(target, false);
+
+		case CORTEX_M_ISRMASK_ON:
+			/* interrupts always masked */
+			return cortex_m_set_maskints(target, true);
+
+		case CORTEX_M_ISRMASK_STEPONLY:
+			/* interrupts masked for single step only -> mask now if MASKINTS
+			 * erratum, otherwise only mask before stepping */
+			return cortex_m_set_maskints(target, cortex_m->maskints_erratum);
+	}
+	return ERROR_OK;
+}
+
+static int cortex_m_set_maskints_for_run(struct target *target)
+{
+	switch (target_to_cm(target)->isrmasking_mode) {
+		case CORTEX_M_ISRMASK_AUTO:
+			/* interrupts taken at resume, whether for step or run -> no mask */
+			return cortex_m_set_maskints(target, false);
+
+		case CORTEX_M_ISRMASK_OFF:
+			/* interrupts never masked */
+			return cortex_m_set_maskints(target, false);
+
+		case CORTEX_M_ISRMASK_ON:
+			/* interrupts always masked */
+			return cortex_m_set_maskints(target, true);
+
+		case CORTEX_M_ISRMASK_STEPONLY:
+			/* interrupts masked for single step only -> no mask */
+			return cortex_m_set_maskints(target, false);
+	}
+	return ERROR_OK;
+}
+
+static int cortex_m_set_maskints_for_step(struct target *target)
+{
+	switch (target_to_cm(target)->isrmasking_mode) {
+		case CORTEX_M_ISRMASK_AUTO:
+			/* the auto-interrupt should already be done -> mask */
+			return cortex_m_set_maskints(target, true);
+
+		case CORTEX_M_ISRMASK_OFF:
+			/* interrupts never masked */
+			return cortex_m_set_maskints(target, false);
+
+		case CORTEX_M_ISRMASK_ON:
+			/* interrupts always masked */
+			return cortex_m_set_maskints(target, true);
+
+		case CORTEX_M_ISRMASK_STEPONLY:
+			/* interrupts masked for single step only -> mask */
+			return cortex_m_set_maskints(target, true);
+	}
+	return ERROR_OK;
 }
 
 static int cortex_m_clear_halt(struct target *target)
@@ -237,11 +314,8 @@ static int cortex_m_endreset_event(struct target *target)
 			return retval;
 	}
 
-	/* Restore proper interrupt masking setting. */
-	if (cortex_m->isrmasking_mode == CORTEX_M_ISRMASK_ON)
-		cortex_m_write_debug_halt_mask(target, C_MASKINTS, 0);
-	else
-		cortex_m_write_debug_halt_mask(target, 0, C_MASKINTS);
+	/* Restore proper interrupt masking setting for running CPU. */
+	cortex_m_set_maskints_for_run(target);
 
 	/* Enable features controlled by ITM and DWT blocks, and catch only
 	 * the vectors we were told to pay attention to.
@@ -255,7 +329,7 @@ static int cortex_m_endreset_event(struct target *target)
 		return retval;
 
 	/* Paranoia: evidently some (early?) chips don't preserve all the
-	 * debug state (including FBP, DWT, etc) across reset...
+	 * debug state (including FPB, DWT, etc) across reset...
 	 */
 
 	/* Enable FPB */
@@ -265,7 +339,7 @@ static int cortex_m_endreset_event(struct target *target)
 		return retval;
 	}
 
-	cortex_m->fpb_enabled = 1;
+	cortex_m->fpb_enabled = true;
 
 	/* Restore FPB registers */
 	for (i = 0; i < cortex_m->fp_num_code + cortex_m->fp_num_lit; i++) {
@@ -405,6 +479,10 @@ static int cortex_m_debug_entry(struct target *target)
 
 	LOG_DEBUG(" ");
 
+	/* Do this really early to minimize the window where the MASKINTS erratum
+	 * can pile up pending interrupts. */
+	cortex_m_set_maskints_for_halt(target);
+
 	cortex_m_clear_halt(target);
 	retval = mem_ap_read_atomic_u32(armv7m->debug_ap, DCB_DHCSR, &cortex_m->dcb_dhcsr);
 	if (retval != ERROR_OK)
@@ -510,7 +588,10 @@ static int cortex_m_poll(struct target *target)
 	}
 
 	if (cortex_m->dcb_dhcsr & S_RESET_ST) {
-		target->state = TARGET_RESET;
+		if (target->state != TARGET_RESET) {
+			target->state = TARGET_RESET;
+			LOG_INFO("%s: external reset detected", target_name(target));
+		}
 		return ERROR_OK;
 	}
 
@@ -564,6 +645,17 @@ static int cortex_m_poll(struct target *target)
 		}
 	}
 
+	/* Check that target is truly halted, since the target could be resumed externally */
+	if ((prev_target_state == TARGET_HALTED) && !(cortex_m->dcb_dhcsr & S_HALT)) {
+		/* registers are now invalid */
+		register_cache_invalidate(armv7m->arm.core_cache);
+
+		target->state = TARGET_RUNNING;
+		LOG_WARNING("%s: external resume detected", target_name(target));
+		target_call_event_callbacks(target, TARGET_EVENT_RESUMED);
+		retval = ERROR_OK;
+	}
+
 	/* Did we detect a failure condition that we cleared? */
 	if (detected_failure != ERROR_OK)
 		retval = detected_failure;
@@ -599,6 +691,10 @@ static int cortex_m_halt(struct target *target)
 
 	/* Write to Debug Halting Control and Status Register */
 	cortex_m_write_debug_halt_mask(target, C_HALT, 0);
+
+	/* Do this really early to minimize the window where the MASKINTS erratum
+	 * can pile up pending interrupts. */
+	cortex_m_set_maskints_for_halt(target);
 
 	target->debug_reason = DBG_REASON_DBGRQ;
 
@@ -753,6 +849,7 @@ static int cortex_m_resume(struct target *target, int current,
 	}
 
 	/* Restart core */
+	cortex_m_set_maskints_for_run(target);
 	cortex_m_write_debug_halt_mask(target, 0, C_HALT);
 
 	target->debug_reason = DBG_REASON_NOTHALTED;
@@ -815,10 +912,12 @@ static int cortex_m_step(struct target *target, int current,
 	 * a normal step, otherwise we have to manually step over the bkpt
 	 * instruction - as such simulate a step */
 	if (bkpt_inst_found == false) {
-		/* Automatic ISR masking mode off: Just step over the next instruction */
-		if ((cortex_m->isrmasking_mode != CORTEX_M_ISRMASK_AUTO))
+		if ((cortex_m->isrmasking_mode != CORTEX_M_ISRMASK_AUTO)) {
+			/* Automatic ISR masking mode off: Just step over the next
+			 * instruction, with interrupts on or off as appropriate. */
+			cortex_m_set_maskints_for_step(target);
 			cortex_m_write_debug_halt_mask(target, C_STEP, C_HALT);
-		else {
+		} else {
 			/* Process interrupts during stepping in a way they don't interfere
 			 * debugging.
 			 *
@@ -857,25 +956,38 @@ static int cortex_m_step(struct target *target, int current,
 				LOG_DEBUG("Stepping over next instruction with interrupts disabled");
 				cortex_m_write_debug_halt_mask(target, C_HALT | C_MASKINTS, 0);
 				cortex_m_write_debug_halt_mask(target, C_STEP, C_HALT);
-				/* Re-enable interrupts */
-				cortex_m_write_debug_halt_mask(target, C_HALT, C_MASKINTS);
+				/* Re-enable interrupts if appropriate */
+				cortex_m_write_debug_halt_mask(target, C_HALT, 0);
+				cortex_m_set_maskints_for_halt(target);
 			}
 			else {
 
 				/* Set a temporary break point */
-				if (breakpoint)
+				if (breakpoint) {
 					retval = cortex_m_set_breakpoint(target, breakpoint);
-				else
-					retval = breakpoint_add(target, pc_value, 2, BKPT_HARD);
+				} else {
+					enum breakpoint_type type = BKPT_HARD;
+					if (cortex_m->fp_rev == 0 && pc_value > 0x1FFFFFFF) {
+						/* FPB rev.1 cannot handle such addr, try BKPT instr */
+						type = BKPT_SOFT;
+					}
+					retval = breakpoint_add(target, pc_value, 2, type);
+				}
+
 				bool tmp_bp_set = (retval == ERROR_OK);
 
 				/* No more breakpoints left, just do a step */
-				if (!tmp_bp_set)
+				if (!tmp_bp_set) {
+					cortex_m_set_maskints_for_step(target);
 					cortex_m_write_debug_halt_mask(target, C_STEP, C_HALT);
-				else {
+					/* Re-enable interrupts if appropriate */
+					cortex_m_write_debug_halt_mask(target, C_HALT, 0);
+					cortex_m_set_maskints_for_halt(target);
+				} else {
 					/* Start the core */
 					LOG_DEBUG("Starting core to serve pending interrupts");
 					int64_t t_start = timeval_ms();
+					cortex_m_set_maskints_for_run(target);
 					cortex_m_write_debug_halt_mask(target, 0, C_HALT | C_STEP);
 
 					/* Wait for pending handlers to complete or timeout */
@@ -903,12 +1015,14 @@ static int cortex_m_step(struct target *target, int current,
 							"leaving target running");
 					} else {
 						/* Step over next instruction with interrupts disabled */
+						cortex_m_set_maskints_for_step(target);
 						cortex_m_write_debug_halt_mask(target,
 							C_HALT | C_MASKINTS,
 							0);
 						cortex_m_write_debug_halt_mask(target, C_STEP, C_HALT);
-						/* Re-enable interrupts */
-						cortex_m_write_debug_halt_mask(target, C_HALT, C_MASKINTS);
+						/* Re-enable interrupts if appropriate */
+						cortex_m_write_debug_halt_mask(target, C_HALT, 0);
+						cortex_m_set_maskints_for_halt(target);
 					}
 				}
 			}
@@ -1010,8 +1124,7 @@ static int cortex_m_assert_reset(struct target *target)
 
 	if (!target->reset_halt) {
 		/* Set/Clear C_MASKINTS in a separate operation */
-		if (cortex_m->dcb_dhcsr & C_MASKINTS)
-			cortex_m_write_debug_halt_mask(target, 0, C_MASKINTS);
+		cortex_m_set_maskints_for_run(target);
 
 		/* clear any debug flags before resuming */
 		cortex_m_clear_halt(target);
@@ -1041,10 +1154,18 @@ static int cortex_m_assert_reset(struct target *target)
 		retval = ERROR_OK;
 	} else {
 		/* Use a standard Cortex-M3 software reset mechanism.
-		 * We default to using VECRESET as it is supported on all current cores.
+		 * We default to using VECRESET as it is supported on all current cores
+		 * (except Cortex-M0, M0+ and M1 which support SYSRESETREQ only!)
 		 * This has the disadvantage of not resetting the peripherals, so a
 		 * reset-init event handler is needed to perform any peripheral resets.
 		 */
+		if (!cortex_m->vectreset_supported
+				&& reset_config == CORTEX_M_RESET_VECTRESET) {
+			reset_config = CORTEX_M_RESET_SYSRESETREQ;
+			LOG_WARNING("VECTRESET is not supported on this Cortex-M core, using SYSRESETREQ instead.");
+			LOG_WARNING("Set 'cortex_m reset_config sysresetreq'.");
+		}
+
 		LOG_DEBUG("Using Cortex-M %s", (reset_config == CORTEX_M_RESET_SYSRESETREQ)
 			? "SYSRESETREQ" : "VECTRESET");
 
@@ -1135,7 +1256,7 @@ int cortex_m_set_breakpoint(struct target *target, struct breakpoint *breakpoint
 			fp_num++;
 		if (fp_num >= cortex_m->fp_num_code) {
 			LOG_ERROR("Can not find free FPB Comparator!");
-			return ERROR_FAIL;
+			return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 		}
 		breakpoint->set = fp_num + 1;
 		fpcr_value = breakpoint->address | 1;
@@ -1151,7 +1272,7 @@ int cortex_m_set_breakpoint(struct target *target, struct breakpoint *breakpoint
 			LOG_ERROR("Unhandled Cortex-M Flash Patch Breakpoint architecture revision");
 			return ERROR_FAIL;
 		}
-		comparator_list[fp_num].used = 1;
+		comparator_list[fp_num].used = true;
 		comparator_list[fp_num].fpcr_value = fpcr_value;
 		target_write_u32(target, comparator_list[fp_num].fpcr_address,
 			comparator_list[fp_num].fpcr_value);
@@ -1166,7 +1287,7 @@ int cortex_m_set_breakpoint(struct target *target, struct breakpoint *breakpoint
 				return retval;
 			}
 
-			cortex_m->fpb_enabled = 1;
+			cortex_m->fpb_enabled = true;
 		}
 	} else if (breakpoint->type == BKPT_SOFT) {
 		uint8_t code[4];
@@ -1225,23 +1346,17 @@ int cortex_m_unset_breakpoint(struct target *target, struct breakpoint *breakpoi
 			LOG_DEBUG("Invalid FP Comparator number in breakpoint");
 			return ERROR_OK;
 		}
-		comparator_list[fp_num].used = 0;
+		comparator_list[fp_num].used = false;
 		comparator_list[fp_num].fpcr_value = 0;
 		target_write_u32(target, comparator_list[fp_num].fpcr_address,
 			comparator_list[fp_num].fpcr_value);
 	} else {
 		/* restore original instruction (kept in target endianness) */
-		if (breakpoint->length == 4) {
-			retval = target_write_memory(target, breakpoint->address & 0xFFFFFFFE, 4, 1,
+		retval = target_write_memory(target, breakpoint->address & 0xFFFFFFFE,
+					breakpoint->length, 1,
 					breakpoint->orig_instr);
-			if (retval != ERROR_OK)
-				return retval;
-		} else {
-			retval = target_write_memory(target, breakpoint->address & 0xFFFFFFFE, 2, 1,
-					breakpoint->orig_instr);
-			if (retval != ERROR_OK)
-				return retval;
-		}
+		if (retval != ERROR_OK)
+			return retval;
 	}
 	breakpoint->set = false;
 
@@ -1250,13 +1365,6 @@ int cortex_m_unset_breakpoint(struct target *target, struct breakpoint *breakpoi
 
 int cortex_m_add_breakpoint(struct target *target, struct breakpoint *breakpoint)
 {
-	struct cortex_m_common *cortex_m = target_to_cm(target);
-
-	if ((breakpoint->type == BKPT_HARD) && (cortex_m->fp_code_available < 1)) {
-		LOG_INFO("no flash patch comparator unit available for hardware breakpoint");
-		return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
-	}
-
 	if (breakpoint->length == 3) {
 		LOG_DEBUG("Using a two byte breakpoint for 32bit Thumb-2 request");
 		breakpoint->length = 2;
@@ -1267,29 +1375,15 @@ int cortex_m_add_breakpoint(struct target *target, struct breakpoint *breakpoint
 		return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 	}
 
-	if (breakpoint->type == BKPT_HARD)
-		cortex_m->fp_code_available--;
-
 	return cortex_m_set_breakpoint(target, breakpoint);
 }
 
 int cortex_m_remove_breakpoint(struct target *target, struct breakpoint *breakpoint)
 {
-	struct cortex_m_common *cortex_m = target_to_cm(target);
+	if (!breakpoint->set)
+		return ERROR_OK;
 
-	/* REVISIT why check? FBP can be updated with core running ... */
-	if (target->state != TARGET_HALTED) {
-		LOG_WARNING("target not halted");
-		return ERROR_TARGET_NOT_HALTED;
-	}
-
-	if (breakpoint->set)
-		cortex_m_unset_breakpoint(target, breakpoint);
-
-	if (breakpoint->type == BKPT_HARD)
-		cortex_m->fp_code_available++;
-
-	return ERROR_OK;
+	return cortex_m_unset_breakpoint(target, breakpoint);
 }
 
 int cortex_m_set_watchpoint(struct target *target, struct watchpoint *watchpoint)
@@ -1322,7 +1416,7 @@ int cortex_m_set_watchpoint(struct target *target, struct watchpoint *watchpoint
 		LOG_ERROR("Can not find free DWT Comparator");
 		return ERROR_FAIL;
 	}
-	comparator->used = 1;
+	comparator->used = true;
 	watchpoint->set = dwt_num + 1;
 
 	comparator->comp = watchpoint->address;
@@ -1379,7 +1473,7 @@ int cortex_m_unset_watchpoint(struct target *target, struct watchpoint *watchpoi
 	}
 
 	comparator = cortex_m->dwt_comparator_list + dwt_num;
-	comparator->used = 0;
+	comparator->used = false;
 	comparator->function = 0;
 	target_write_u32(target, comparator->dwt_comparator_address + 8,
 		comparator->function);
@@ -1986,7 +2080,7 @@ int cortex_m_examine(struct target *target)
 	/* stlink shares the examine handler but does not support
 	 * all its calls */
 	if (!armv7m->stlink) {
-		if (cortex_m->apsel < 0) {
+		if (cortex_m->apsel == DP_APSEL_INVALID) {
 			/* Search for the MEM-AP */
 			retval = dap_find_ap(swjdp, AP_TYPE_AHB_AP, &armv7m->debug_ap);
 			if (retval != ERROR_OK) {
@@ -2018,14 +2112,20 @@ int cortex_m_examine(struct target *target)
 
 		LOG_DEBUG("Cortex-M%d r%" PRId8 "p%" PRId8 " processor detected",
 				i, (uint8_t)((cpuid >> 20) & 0xf), (uint8_t)((cpuid >> 0) & 0xf));
+		cortex_m->maskints_erratum = false;
 		if (i == 7) {
 			uint8_t rev, patch;
 			rev = (cpuid >> 20) & 0xf;
 			patch = (cpuid >> 0) & 0xf;
-			if ((rev == 0) && (patch < 2))
-				LOG_WARNING("Silicon bug: single stepping will enter pending exception handler!");
+			if ((rev == 0) && (patch < 2)) {
+				LOG_WARNING("Silicon bug: single stepping may enter pending exception handler!");
+				cortex_m->maskints_erratum = true;
+			}
 		}
 		LOG_DEBUG("cpuid: 0x%8.8" PRIx32 "", cpuid);
+
+		/* VECTRESET is not supported on Cortex-M0, M0+ and M1 */
+		cortex_m->vectreset_supported = i > 1;
 
 		if (i == 4) {
 			target_read_u32(target, MVFR0, &mvfr0);
@@ -2095,7 +2195,6 @@ int cortex_m_examine(struct target *target)
 		/* bits [14:12] and [7:4] */
 		cortex_m->fp_num_code = ((fpcr >> 8) & 0x70) | ((fpcr >> 4) & 0xF);
 		cortex_m->fp_num_lit = (fpcr >> 8) & 0xF;
-		cortex_m->fp_code_available = cortex_m->fp_num_code;
 		/* Detect flash patch revision, see RM DDI 0403E.b page C1-817.
 		   Revision is zero base, fp_rev == 1 means Rev.2 ! */
 		cortex_m->fp_rev = (fpcr >> 28) & 0xf;
@@ -2237,21 +2336,27 @@ static int cortex_m_init_arch_info(struct target *target,
 	armv7m->load_core_reg_u32 = cortex_m_load_core_reg_u32;
 	armv7m->store_core_reg_u32 = cortex_m_store_core_reg_u32;
 
-	target_register_timer_callback(cortex_m_handle_target_request, 1, 1, target);
+	target_register_timer_callback(cortex_m_handle_target_request, 1,
+		TARGET_TIMER_TYPE_PERIODIC, target);
 
 	return ERROR_OK;
 }
 
 static int cortex_m_target_create(struct target *target, Jim_Interp *interp)
 {
-	struct cortex_m_common *cortex_m = calloc(1, sizeof(struct cortex_m_common));
-	cortex_m->common_magic = CORTEX_M_COMMON_MAGIC;
 	struct adiv5_private_config *pc;
 
 	pc = (struct adiv5_private_config *)target->private_config;
 	if (adiv5_verify_config(pc) != ERROR_OK)
 		return ERROR_FAIL;
 
+	struct cortex_m_common *cortex_m = calloc(1, sizeof(struct cortex_m_common));
+	if (cortex_m == NULL) {
+		LOG_ERROR("No memory creating target");
+		return ERROR_FAIL;
+	}
+
+	cortex_m->common_magic = CORTEX_M_COMMON_MAGIC;
 	cortex_m->apsel = pc->ap_num;
 
 	cortex_m_init_arch_info(target, cortex_m, pc->dap);
@@ -2371,6 +2476,7 @@ COMMAND_HANDLER(handle_cortex_m_mask_interrupts_command)
 		{ .name = "auto", .value = CORTEX_M_ISRMASK_AUTO },
 		{ .name = "off", .value = CORTEX_M_ISRMASK_OFF },
 		{ .name = "on", .value = CORTEX_M_ISRMASK_ON },
+		{ .name = "steponly", .value = CORTEX_M_ISRMASK_STEPONLY },
 		{ .name = NULL, .value = -1 },
 	};
 	const Jim_Nvp *n;
@@ -2390,12 +2496,7 @@ COMMAND_HANDLER(handle_cortex_m_mask_interrupts_command)
 		if (n->name == NULL)
 			return ERROR_COMMAND_SYNTAX_ERROR;
 		cortex_m->isrmasking_mode = n->value;
-
-
-		if (cortex_m->isrmasking_mode == CORTEX_M_ISRMASK_ON)
-			cortex_m_write_debug_halt_mask(target, C_HALT | C_MASKINTS, 0);
-		else
-			cortex_m_write_debug_halt_mask(target, C_HALT, C_MASKINTS);
+		cortex_m_set_maskints_for_halt(target);
 	}
 
 	n = Jim_Nvp_value2name_simple(nvp_maskisr_modes, cortex_m->isrmasking_mode);
@@ -2418,8 +2519,16 @@ COMMAND_HANDLER(handle_cortex_m_reset_config_command)
 	if (CMD_ARGC > 0) {
 		if (strcmp(*CMD_ARGV, "sysresetreq") == 0)
 			cortex_m->soft_reset_config = CORTEX_M_RESET_SYSRESETREQ;
-		else if (strcmp(*CMD_ARGV, "vectreset") == 0)
-			cortex_m->soft_reset_config = CORTEX_M_RESET_VECTRESET;
+
+		else if (strcmp(*CMD_ARGV, "vectreset") == 0) {
+			if (target_was_examined(target)
+					&& !cortex_m->vectreset_supported)
+				LOG_WARNING("VECTRESET is not supported on your Cortex-M core!");
+			else
+				cortex_m->soft_reset_config = CORTEX_M_RESET_VECTRESET;
+
+		} else
+			return ERROR_COMMAND_SYNTAX_ERROR;
 	}
 
 	switch (cortex_m->soft_reset_config) {
@@ -2447,7 +2556,7 @@ static const struct command_registration cortex_m_exec_command_handlers[] = {
 		.handler = handle_cortex_m_mask_interrupts_command,
 		.mode = COMMAND_EXEC,
 		.help = "mask cortex_m interrupts",
-		.usage = "['auto'|'on'|'off']",
+		.usage = "['auto'|'on'|'off'|'steponly']",
 	},
 	{
 		.name = "vector_catch",
@@ -2461,7 +2570,7 @@ static const struct command_registration cortex_m_exec_command_handlers[] = {
 		.handler = handle_cortex_m_reset_config_command,
 		.mode = COMMAND_ANY,
 		.help = "configure software reset handling",
-		.usage = "['srst'|'sysresetreq'|'vectreset']",
+		.usage = "['sysresetreq'|'vectreset']",
 	},
 	COMMAND_REGISTRATION_DONE
 };
@@ -2499,6 +2608,7 @@ struct target_type cortexm_target = {
 	.deassert_reset = cortex_m_deassert_reset,
 	.soft_reset_halt = cortex_m_soft_reset_halt,
 
+	.get_gdb_arch = arm_get_gdb_arch,
 	.get_gdb_reg_list = armv7m_get_gdb_reg_list,
 
 	.read_memory = cortex_m_read_memory,

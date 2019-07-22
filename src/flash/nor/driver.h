@@ -109,6 +109,8 @@ struct flash_driver {
 	/**
 	 * Bank/sector protection routine (target-specific).
 	 *
+	 * If protection is not implemented, set method to NULL
+	 *
 	 * When called, the driver should enable/disable protection
 	 * for MINIMUM the range covered by first..last sectors
 	 * inclusive. Some chips have alignment requirements will
@@ -178,6 +180,8 @@ struct flash_driver {
 	 * flash_sector_s::is_protected field for each of the flash
 	 * bank's sectors.
 	 *
+	 * If protection is not implemented, set method to NULL
+	 *
 	 * @param bank - the bank to check
 	 * @returns ERROR_OK if successful; otherwise, an error code.
 	 */
@@ -227,6 +231,6 @@ struct flash_driver {
  * @param name The name of the requested driver.
  * @returns The flash_driver called @c name, or NULL if not found.
  */
-struct flash_driver *flash_driver_find_by_name(const char *name);
+const struct flash_driver *flash_driver_find_by_name(const char *name);
 
 #endif /* OPENOCD_FLASH_NOR_DRIVER_H */

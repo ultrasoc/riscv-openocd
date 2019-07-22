@@ -108,9 +108,6 @@ struct cortex_a_common {
 	int wrp_num_available;
 	struct cortex_a_wrp *wrp_list;
 
-	/* Use cortex_a_read_regs_through_mem for fast register reads */
-	int fast_reg_read;
-
 	uint32_t cpuid;
 	uint32_t didr;
 

@@ -29,6 +29,7 @@
 #include "armv8_opcodes.h"
 #include "armv8_cache.h"
 #include "arm_semihosting.h"
+#include "smp.h"
 #include <helper/time_support.h>
 
 enum restart_mode {
@@ -64,9 +65,6 @@ static int aarch64_virt2phys(struct target *target,
 static int aarch64_read_cpu_memory(struct target *target,
 	uint64_t address, uint32_t size, uint32_t count, uint8_t *buffer);
 
-#define foreach_smp_target(pos, head) \
-	for (pos = head; (pos != NULL); pos = pos->next)
-
 static int aarch64_restore_system_control_reg(struct target *target)
 {
 	enum arm_mode target_mode = ARM_MODE_ANY;
@@ -101,6 +99,7 @@ static int aarch64_restore_system_control_reg(struct target *target)
 		case ARM_MODE_ABT:
 		case ARM_MODE_FIQ:
 		case ARM_MODE_IRQ:
+		case ARM_MODE_SYS:
 			instr = ARMV4_5_MCR(15, 0, 0, 1, 0, 0);
 			break;
 
@@ -173,6 +172,7 @@ static int aarch64_mmu_modify(struct target *target, int enable)
 	case ARM_MODE_ABT:
 	case ARM_MODE_FIQ:
 	case ARM_MODE_IRQ:
+	case ARM_MODE_SYS:
 		instr = ARMV4_5_MCR(15, 0, 0, 1, 0, 0);
 		break;
 
@@ -299,6 +299,8 @@ static int aarch64_dpm_setup(struct aarch64_common *a8, uint64_t debug)
 	dpm->didr = debug;
 
 	retval = armv8_dpm_setup(dpm);
+	if (retval == ERROR_OK)
+		retval = armv8_dpm_initialize(dpm);
 
 	return retval;
 }
@@ -638,8 +640,8 @@ static int aarch64_restore_one(struct target *target, int current,
 	}
 	LOG_DEBUG("resume pc = 0x%016" PRIx64, resume_pc);
 	buf_set_u64(arm->pc->value, 0, 64, resume_pc);
-	arm->pc->dirty = 1;
-	arm->pc->valid = 1;
+	arm->pc->dirty = true;
+	arm->pc->valid = true;
 
 	/* called it now before restoring context because it uses cpu
 	 * register r0 for restoring system control register */
@@ -1018,8 +1020,25 @@ static int aarch64_debug_entry(struct target *target)
 	armv8_dpm_report_dscr(dpm, dscr);
 
 	/* save address of instruction that triggered the watchpoint? */
-	if (target->debug_reason == DBG_REASON_WATCHPOINT) {
-	}
+/*	if (target->debug_reason == DBG_REASON_WATCHPOINT) {
+		uint32_t tmp;
+		uint64_t wfar = 0;
+
+		retval = mem_ap_read_atomic_u32(armv8->debug_ap,
+				armv8->debug_base + CPUV8_DBG_WFAR1,
+				&tmp);
+		if (retval != ERROR_OK)
+			return retval;
+		wfar = tmp;
+		wfar = (wfar << 32);
+		retval = mem_ap_read_atomic_u32(armv8->debug_ap,
+				armv8->debug_base + CPUV8_DBG_WFAR0,
+				&tmp);
+		if (retval != ERROR_OK)
+			return retval;
+		wfar |= tmp;
+		armv8_dpm_report_wfar(&armv8->dpm, wfar);
+	}*/
 
 	retval = armv8_dpm_read_current_registers(&armv8->dpm);
 
@@ -1058,6 +1077,7 @@ static int aarch64_post_debug_entry(struct target *target)
 	case ARM_MODE_ABT:
 	case ARM_MODE_FIQ:
 	case ARM_MODE_IRQ:
+	case ARM_MODE_SYS:
 		instr = ARMV4_5_MRC(15, 0, 0, 1, 0, 0);
 		break;
 
@@ -1097,7 +1117,7 @@ static int aarch64_post_debug_entry(struct target *target)
  * single-step a target
  */
 static int aarch64_step_internal(struct target *target, int current, target_addr_t address,
-	int handle_breakpoints, int debug_execution) 
+	int handle_breakpoints, int debug_execution)
 {
 	struct armv8_common *armv8 = target_to_armv8(target);
 	struct aarch64_common *aarch64 = target_to_aarch64(target);
@@ -1162,7 +1182,7 @@ static int aarch64_step_internal(struct target *target, int current, target_addr
 	}
 
 	/* all other targets running, restore and restart the current target */
-	retval = aarch64_restore_one(target, current, &address, 0, debug_execution);
+	retval = aarch64_restore_one(target, current, &address, 0, 0);
 	if (retval == ERROR_OK)
 		retval = aarch64_restart_one(target,
 					debug_execution ? RESTART_LAZY_DEBUG : RESTART_LAZY);
@@ -1683,6 +1703,7 @@ static int aarch64_add_hybrid_breakpoint(struct target *target,
 	return aarch64_set_hybrid_breakpoint(target, breakpoint);	/* ??? */
 }
 
+
 static int aarch64_remove_breakpoint(struct target *target, struct breakpoint *breakpoint)
 {
 	struct aarch64_common *aarch64 = target_to_aarch64(target);
@@ -1704,7 +1725,7 @@ static int aarch64_remove_breakpoint(struct target *target, struct breakpoint *b
 	return ERROR_OK;
 }
 
-/* Setup hardware Breakpoint Register Pair */
+/* Setup hardware Watchpoint Register Pair */
 static int aarch64_set_watchpoint(struct target *target,
 	struct watchpoint *watchpoint)
 {
@@ -1796,7 +1817,7 @@ static int aarch64_set_watchpoint(struct target *target,
 
 	LOG_DEBUG("wp %i control 0x%0" PRIx32 " value 0x%" TARGET_PRIxADDR, wp_i,
 		wp_list[wp_i].control,
-		wp_list[wp_i].value); 
+		wp_list[wp_i].value);
 
 	/* Ensure that halting debug mode is enable */
 	retval = aarch64_set_dscr_bits(target, DSCR_HDE, DSCR_HDE);
@@ -1897,7 +1918,7 @@ int aarch64_hit_watchpoint(struct target *target, struct watchpoint **hit_watchp
 	int retval;
 
 	retval = mem_ap_read_atomic_u32(armv8->debug_ap,
-									armv8->debug_base + CPUV8_DBG_WAR1,
+									armv8->debug_base + CPUV8_DBG_WFAR1,
 									&tmp);
 	if (retval != ERROR_OK) {
 		LOG_ERROR("Failed to read watchpoint upper address register");
@@ -1906,7 +1927,7 @@ int aarch64_hit_watchpoint(struct target *target, struct watchpoint **hit_watchp
 	war = tmp;
 	war = (war << 32);
 	retval = mem_ap_read_atomic_u32(armv8->debug_ap,
-									armv8->debug_base + CPUV8_DBG_WAR0,
+									armv8->debug_base + CPUV8_DBG_WFAR0,
 									&tmp);
 	if (retval != ERROR_OK) {
 		LOG_ERROR("Failed to read watchpoint lower address register");
@@ -2615,18 +2636,14 @@ static int aarch64_examine_first(struct target *target)
 		return ERROR_FAIL;
 
 	pc = (struct aarch64_private_config *)target->private_config;
-	if (pc->cti == NULL) {
-		LOG_ERROR("BRH: Missing a private config cti");
+	if (pc->cti == NULL)
 		return ERROR_FAIL;
-	}
 
 	armv8->cti = pc->cti;
 
 	retval = aarch64_dpm_setup(aarch64, debug);
-	if (retval != ERROR_OK) {
-		LOG_ERROR("dpm setup failed");
+	if (retval != ERROR_OK)
 		return retval;
-	}
 
 	/* Setup Breakpoint Register Pairs */
 	aarch64->brp_num = (uint32_t)((debug >> 12) & 0x0F) + 1;
@@ -2669,8 +2686,6 @@ static int aarch64_examine_first(struct target *target)
 static int aarch64_examine(struct target *target)
 {
 	int retval = ERROR_OK;
-	struct aarch64_common *aarch64 = target_to_aarch64(target);
-	struct arm_dpm *dpm = &aarch64->armv8_common.dpm;
 
 	/* don't re-probe hardware after each reset */
 	if (!target_was_examined(target))
@@ -2679,12 +2694,6 @@ static int aarch64_examine(struct target *target)
 	/* Configure core debug access */
 	if (retval == ERROR_OK)
 		retval = aarch64_init_debug_access(target);
-
-	retval = armv8_dpm_initialize(dpm);
-	if (retval != ERROR_OK) {
-		LOG_ERROR("dpm initialization failed");
-		return retval;
-	}
 
 	return retval;
 }
@@ -2717,7 +2726,8 @@ static int aarch64_init_arch_info(struct target *target,
 	armv8->armv8_mmu.read_physical_memory = aarch64_read_phys_memory;
 
 	armv8_init_arch_info(target, armv8);
-	target_register_timer_callback(aarch64_handle_target_request, 1, 1, target);
+	target_register_timer_callback(aarch64_handle_target_request, 1,
+		TARGET_TIMER_TYPE_PERIODIC, target);
 
 	return ERROR_OK;
 }
@@ -2725,10 +2735,16 @@ static int aarch64_init_arch_info(struct target *target,
 static int aarch64_target_create(struct target *target, Jim_Interp *interp)
 {
 	struct aarch64_private_config *pc = target->private_config;
-	struct aarch64_common *aarch64 = calloc(1, sizeof(struct aarch64_common));
+	struct aarch64_common *aarch64;
 
 	if (adiv5_verify_config(&pc->adiv5_config) != ERROR_OK)
 		return ERROR_FAIL;
+
+	aarch64 = calloc(1, sizeof(struct aarch64_common));
+	if (aarch64 == NULL) {
+		LOG_ERROR("Out of memory");
+		return ERROR_FAIL;
+	}
 
 	return aarch64_init_arch_info(target, aarch64, pc->adiv5_config.dap);
 }
@@ -2871,42 +2887,6 @@ COMMAND_HANDLER(aarch64_handle_dbginit_command)
 	}
 
 	return aarch64_init_debug_access(target);
-}
-COMMAND_HANDLER(aarch64_handle_smp_off_command)
-{
-	struct target *target = get_current_target(CMD_CTX);
-	/* check target is an smp target */
-	struct target_list *head;
-	struct target *curr;
-	head = target->head;
-	target->smp = 0;
-	if (head != (struct target_list *)NULL) {
-		while (head != (struct target_list *)NULL) {
-			curr = head->target;
-			curr->smp = 0;
-			head = head->next;
-		}
-		/*  fixes the target display to the debugger */
-		target->gdb_service->target = target;
-	}
-	return ERROR_OK;
-}
-
-COMMAND_HANDLER(aarch64_handle_smp_on_command)
-{
-	struct target *target = get_current_target(CMD_CTX);
-	struct target_list *head;
-	struct target *curr;
-	head = target->head;
-	if (head != (struct target_list *)NULL) {
-		target->smp = 1;
-		while (head != (struct target_list *)NULL) {
-			curr = head->target;
-			curr->smp = 1;
-			head = head->next;
-		}
-	}
-	return ERROR_OK;
 }
 
 COMMAND_HANDLER(aarch64_mask_interrupts_command)
@@ -3115,19 +3095,6 @@ static const struct command_registration aarch64_exec_command_handlers[] = {
 		.help = "Initialize core debug",
 		.usage = "",
 	},
-	{	.name = "smp_off",
-		.handler = aarch64_handle_smp_off_command,
-		.mode = COMMAND_EXEC,
-		.help = "Stop smp handling",
-		.usage = "",
-	},
-	{
-		.name = "smp_on",
-		.handler = aarch64_handle_smp_on_command,
-		.mode = COMMAND_EXEC,
-		.help = "Restart smp handling",
-		.usage = "",
-	},
 	{
 		.name = "maskisr",
 		.handler = aarch64_mask_interrupts_command,
@@ -3156,6 +3123,7 @@ static const struct command_registration aarch64_exec_command_handlers[] = {
 		.help = "Set whether to step when a watchpoint is hit",
 		.usage = "['on'|'off']",
 	},
+
 
 	COMMAND_REGISTRATION_DONE
 };
@@ -3188,6 +3156,7 @@ struct target_type aarch64_target = {
 	.deassert_reset = aarch64_deassert_reset,
 
 	/* REVISIT allow exporting VFP3 registers ... */
+	.get_gdb_arch = armv8_get_gdb_arch,
 	.get_gdb_reg_list = armv8_get_gdb_reg_list,
 
 	.read_memory = aarch64_read_memory,

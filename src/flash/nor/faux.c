@@ -85,21 +85,10 @@ static int faux_erase(struct flash_bank *bank, int first, int last)
 	return ERROR_OK;
 }
 
-static int faux_protect(struct flash_bank *bank, int set, int first, int last)
-{
-	LOG_USER("set protection sector %d to %d to %s", first, last, set ? "on" : "off");
-	return ERROR_OK;
-}
-
 static int faux_write(struct flash_bank *bank, const uint8_t *buffer, uint32_t offset, uint32_t count)
 {
 	struct faux_flash_bank *info = bank->driver_priv;
 	memcpy(info->memory + offset, buffer, count);
-	return ERROR_OK;
-}
-
-static int faux_protect_check(struct flash_bank *bank)
-{
 	return ERROR_OK;
 }
 
@@ -120,22 +109,21 @@ static const struct command_registration faux_command_handlers[] = {
 		.mode = COMMAND_ANY,
 		.help = "faux flash command group",
 		.chain = hello_command_handlers,
+		.usage = "",
 	},
 	COMMAND_REGISTRATION_DONE
 };
 
-struct flash_driver faux_flash = {
+const struct flash_driver faux_flash = {
 	.name = "faux",
 	.commands = faux_command_handlers,
 	.flash_bank_command = faux_flash_bank_command,
 	.erase = faux_erase,
-	.protect = faux_protect,
 	.write = faux_write,
 	.read = default_flash_read,
 	.probe = faux_probe,
 	.auto_probe = faux_probe,
 	.erase_check = default_flash_blank_check,
-	.protect_check = faux_protect_check,
 	.info = faux_info,
 	.free_driver_priv = default_flash_free_driver_priv,
 };

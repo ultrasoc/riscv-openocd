@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <netinet/tcp.h>
 #endif
 
 #include "ust_tcf.h"
@@ -111,6 +112,12 @@ int ust_tcf_connect(ust_tcf_t *s, const char *host, const char *port) {
 		s->skt = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
 		if (s->skt == -1)
 			continue;
+
+        /* Debug messages tend to be small containing only 4 bytes of data, this does not fill a TCP
+           packet. Disable the "Nagle" algorithm so all data gets sent immediatly */
+        int flag = 1;
+        setsockopt(s->skt, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(int));
+
 		rc = connect(s->skt, addr->ai_addr, addr->ai_addrlen);
 		if (rc != -1)
 			break;
@@ -185,6 +192,13 @@ int ust_tcf_run_cmd(ust_tcf_t *s, char *label, char *function, char *data, int d
 	LOG_DEBUG_IO("Sending tcf cmd: %s %s %s %s %s", header, token, label, function, data);
 
 	bytes_sent = send(s->skt, buffer, len, 0);
+#ifndef _WIN32
+    /* This disables delayed acks, windows does not support this option, BUT does disable
+       delayed acks on loopback adapter. NOTE: Change is not permanent so needs resetting
+       after all TCP socket communications */
+    int flag = 1;
+    setsockopt(s->skt, IPPROTO_TCP, TCP_QUICKACK, &flag, sizeof(int));
+#endif
 
 	if (bytes_sent != len) {
 		LOG_ERROR("sent %d bytes expected to send %d\n", bytes_sent, len);
@@ -195,12 +209,20 @@ int ust_tcf_run_cmd(ust_tcf_t *s, char *label, char *function, char *data, int d
 }
 
 
-static int do_recv(int skt, char *buffer, size_t len) {
+static int do_recv(int skt, char *buffer, size_t len, char *text) {
 	int remaining = len;
 	int length = 0;
 
-	while (remaining > 0) {
+    while (remaining > 0) {
 		int recv_len = recv(skt, buffer + length, remaining, 0);
+#ifndef _WIN32
+        /* This disables delayed acks, windows does not support this option, BUT does disable
+           delayed acks on loopback adapter. NOTE: Change is not permanent so needs resetting
+           after all TCP socket communications */
+        int flag = 1;
+        setsockopt(skt, IPPROTO_TCP, TCP_QUICKACK, &flag, sizeof(int));
+#endif
+
 		if (recv_len <= 0) {
 			/* Check the errno */
 			LOG_ERROR("recv failed len: %d errno %d %s",
@@ -221,7 +243,7 @@ static int recv_pkt(ust_tcf_t *s)
 	int err;
 	// The header is at least 4 bytes long
 	length = 4;
-	err = do_recv(s->skt, header, length);
+	err = do_recv(s->skt, header, length, "HEADER");
 	if (err != ERROR_OK) {
 		LOG_ERROR("Failed to receive tcf header");
 		return err;
@@ -235,7 +257,7 @@ static int recv_pkt(ust_tcf_t *s)
 		if (length >= MAX_HEADER_SIZE) {
 			LOG_ERROR("Malformed TCF packet, missing ]");
 		}
-		err = do_recv(s->skt, header + length, 1);
+		err = do_recv(s->skt, header + length, 1, "HEADER_ERR");
 		if (err != ERROR_OK) {
 			LOG_ERROR("Failed to recv tcf header");
 			return err;
@@ -257,7 +279,7 @@ static int recv_pkt(ust_tcf_t *s)
 		}
 	}
 
-	err = do_recv(s->skt, s->recv_buffer, payload_len);
+	err = do_recv(s->skt, s->recv_buffer, payload_len, "PAYLOAD");
 	if (err != ERROR_OK) {
 		LOG_ERROR("Failed to receive tcf payload");
 		return err;

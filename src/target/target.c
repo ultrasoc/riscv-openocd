@@ -108,6 +108,8 @@ extern struct target_type quark_x10xx_target;
 extern struct target_type quark_d20xx_target;
 extern struct target_type stm8_target;
 extern struct target_type riscv_target;
+extern struct target_type mem_ap_target;
+extern struct target_type esirisc_target;
 
 static struct target_type *target_types[] = {
 	&arm7tdmi_target,
@@ -141,6 +143,8 @@ static struct target_type *target_types[] = {
 	&quark_d20xx_target,
 	&stm8_target,
 	&riscv_target,
+	&mem_ap_target,
+	&esirisc_target,
 #if BUILD_TARGET64
 	&aarch64_target,
 #endif
@@ -247,6 +251,7 @@ static const Jim_Nvp nvp_target_debug_reason[] = {
 	{ .name = "single-step"              , .value = DBG_REASON_SINGLESTEP },
 	{ .name = "target-not-halted"        , .value = DBG_REASON_NOTHALTED  },
 	{ .name = "program-exit"             , .value = DBG_REASON_EXIT },
+	{ .name = "exception-catch"          , .value = DBG_REASON_EXC_CATCH },
 	{ .name = "undefined"                , .value = DBG_REASON_UNDEFINED },
 	{ .name = NULL, .value = -1 },
 };
@@ -513,9 +518,7 @@ struct target *get_target_by_num(int num)
 
 struct target *get_current_target(struct command_context *cmd_ctx)
 {
-	struct target *target = cmd_ctx->current_target_override
-		? cmd_ctx->current_target_override
-		: cmd_ctx->current_target;
+	struct target *target = get_current_target_or_null(cmd_ctx);
 
 	if (target == NULL) {
 		LOG_ERROR("BUG: current_target out of bounds");
@@ -523,6 +526,13 @@ struct target *get_current_target(struct command_context *cmd_ctx)
 	}
 
 	return target;
+}
+
+struct target *get_current_target_or_null(struct command_context *cmd_ctx)
+{
+	return cmd_ctx->current_target_override
+		? cmd_ctx->current_target_override
+		: cmd_ctx->current_target;
 }
 
 int target_poll(struct target *target)
@@ -1043,6 +1053,9 @@ int target_run_flash_async_algorithm(struct target *target,
 		retval = target_write_u32(target, wp_addr, wp);
 		if (retval != ERROR_OK)
 			break;
+
+		/* Avoid GDB timeouts */
+		keep_alive();
 	}
 
 	if (retval != ERROR_OK) {
@@ -1197,12 +1210,40 @@ int target_hit_watchpoint(struct target *target,
 	return target->type->hit_watchpoint(target, hit_watchpoint);
 }
 
+const char *target_get_gdb_arch(struct target *target)
+{
+	if (target->type->get_gdb_arch == NULL)
+		return NULL;
+	return target->type->get_gdb_arch(target);
+}
+
 int target_get_gdb_reg_list(struct target *target,
 		struct reg **reg_list[], int *reg_list_size,
 		enum target_register_class reg_class)
 {
 	return target->type->get_gdb_reg_list(target, reg_list, reg_list_size, reg_class);
 }
+
+int target_get_gdb_reg_list_noread(struct target *target,
+		struct reg **reg_list[], int *reg_list_size,
+		enum target_register_class reg_class)
+{
+	if (target->type->get_gdb_reg_list_noread &&
+			target->type->get_gdb_reg_list_noread(target, reg_list,
+				reg_list_size, reg_class) == ERROR_OK)
+		return ERROR_OK;
+	return target_get_gdb_reg_list(target, reg_list, reg_list_size, reg_class);
+}
+
+bool target_supports_gdb_connection(struct target *target)
+{
+	/*
+	 * based on current code, we can simply exclude all the targets that
+	 * don't provide get_gdb_reg_list; this could change with new targets.
+	 */
+	return !!target->type->get_gdb_reg_list;
+}
+
 int target_step(struct target *target,
 		int current, target_addr_t address, int handle_breakpoints)
 {
@@ -1225,6 +1266,22 @@ int target_gdb_fileio_end(struct target *target, int retcode, int fileio_errno, 
 		return ERROR_TARGET_NOT_HALTED;
 	}
 	return target->type->gdb_fileio_end(target, retcode, fileio_errno, ctrl_c);
+}
+
+target_addr_t target_address_max(struct target *target)
+{
+	unsigned bits = target_address_bits(target);
+	if (sizeof(target_addr_t) * 8 == bits)
+		return (target_addr_t) -1;
+	else
+		return (((target_addr_t) 1) << bits) - 1;
+}
+
+unsigned target_address_bits(struct target *target)
+{
+	if (target->type->address_bits)
+		return target->type->address_bits(target);
+	return 32;
 }
 
 int target_profiling(struct target *target, uint32_t *samples,
@@ -1328,7 +1385,7 @@ static int target_init(struct command_context *cmd_ctx)
 		return retval;
 
 	retval = target_register_timer_callback(&handle_target,
-			polling_interval, 1, cmd_ctx->interp);
+			polling_interval, TARGET_TIMER_TYPE_PERIODIC, cmd_ctx->interp);
 	if (ERROR_OK != retval)
 		return retval;
 
@@ -1431,7 +1488,8 @@ int target_register_trace_callback(int (*callback)(struct target *target,
 	return ERROR_OK;
 }
 
-int target_register_timer_callback(int (*callback)(void *priv), int time_ms, int periodic, void *priv)
+int target_register_timer_callback(int (*callback)(void *priv),
+		unsigned int time_ms, enum target_timer_type type, void *priv)
 {
 	struct target_timer_callback **callbacks_p = &target_timer_callbacks;
 
@@ -1446,7 +1504,7 @@ int target_register_timer_callback(int (*callback)(void *priv), int time_ms, int
 
 	(*callbacks_p) = malloc(sizeof(struct target_timer_callback));
 	(*callbacks_p)->callback = callback;
-	(*callbacks_p)->periodic = periodic;
+	(*callbacks_p)->type = type;
 	(*callbacks_p)->time_ms = time_ms;
 	(*callbacks_p)->removed = false;
 
@@ -1546,8 +1604,9 @@ int target_call_event_callbacks(struct target *target, enum target_event event)
 		target_call_event_callbacks(target, TARGET_EVENT_GDB_HALT);
 	}
 
-	LOG_DEBUG("target event %i (%s)", event,
-			Jim_Nvp_value2name_simple(nvp_target_event, event)->name);
+	LOG_DEBUG("target event %i (%s) for core %d", event,
+			Jim_Nvp_value2name_simple(nvp_target_event, event)->name,
+			target->coreid);
 
 	target_handle_event(target, event);
 
@@ -1596,7 +1655,7 @@ static int target_call_timer_callback(struct target_timer_callback *cb,
 {
 	cb->callback(cb->priv);
 
-	if (cb->periodic)
+	if (cb->type == TARGET_TIMER_TYPE_PERIODIC)
 		return target_timer_callback_periodic_restart(cb, now);
 
 	return target_unregister_timer_callback(cb->callback, cb->priv);
@@ -1630,7 +1689,7 @@ static int target_call_timer_callbacks_check_time(int checktime)
 		}
 
 		bool call_it = (*callback)->callback &&
-			((!checktime && (*callback)->periodic) ||
+			((!checktime && (*callback)->type == TARGET_TIMER_TYPE_PERIODIC) ||
 			 timeval_compare(&now, &(*callback)->when) >= 0);
 
 		if (call_it)
@@ -1890,6 +1949,65 @@ int target_free_working_area(struct target *target, struct working_area *area)
 	return target_free_working_area_restore(target, area, 1);
 }
 
+/* free resources and restore memory, if restoring memory fails,
+ * free up resources anyway
+ */
+static void target_free_all_working_areas_restore(struct target *target, int restore)
+{
+	struct working_area *c = target->working_areas;
+
+	LOG_DEBUG("freeing all working areas");
+
+	/* Loop through all areas, restoring the allocated ones and marking them as free */
+	while (c) {
+		if (!c->free) {
+			if (restore)
+				target_restore_working_area(target, c);
+			c->free = true;
+			*c->user = NULL; /* Same as above */
+			c->user = NULL;
+		}
+		c = c->next;
+	}
+
+	/* Run a merge pass to combine all areas into one */
+	target_merge_working_areas(target);
+
+	print_wa_layout(target);
+}
+
+void target_free_all_working_areas(struct target *target)
+{
+	target_free_all_working_areas_restore(target, 1);
+
+	/* Now we have none or only one working area marked as free */
+	if (target->working_areas) {
+		/* Free the last one to allow on-the-fly moving and resizing */
+		free(target->working_areas->backup);
+		free(target->working_areas);
+		target->working_areas = NULL;
+	}
+}
+
+/* Find the largest number of bytes that can be allocated */
+uint32_t target_get_working_area_avail(struct target *target)
+{
+	struct working_area *c = target->working_areas;
+	uint32_t max_size = 0;
+
+	if (c == NULL)
+		return target->working_area_size;
+
+	while (c) {
+		if (c->free && max_size < c->size)
+			max_size = c->size;
+
+		c = c->next;
+	}
+
+	return max_size;
+}
+
 static void target_destroy(struct target *target)
 {
 	if (target->type->deinit_target)
@@ -1909,11 +2027,6 @@ static void target_destroy(struct target *target)
 	}
 
 	target_free_all_working_areas(target);
-	/* Now we have none or only one working area marked as free */
-	if (target->working_areas) {
-		free(target->working_areas->backup);
-		free(target->working_areas);
-	}
 
 	/* release the targets SMP list */
 	if (target->smp) {
@@ -1927,6 +2040,7 @@ static void target_destroy(struct target *target)
 		target->smp = 0;
 	}
 
+	free(target->gdb_port_override);
 	free(target->type);
 	free(target->trace_info);
 	free(target->fileio_info);
@@ -1961,57 +2075,6 @@ void target_quit(void)
 	}
 
 	all_targets = NULL;
-}
-
-/* free resources and restore memory, if restoring memory fails,
- * free up resources anyway
- */
-static void target_free_all_working_areas_restore(struct target *target, int restore)
-{
-	struct working_area *c = target->working_areas;
-
-	LOG_DEBUG("freeing all working areas");
-
-	/* Loop through all areas, restoring the allocated ones and marking them as free */
-	while (c) {
-		if (!c->free) {
-			if (restore)
-				target_restore_working_area(target, c);
-			c->free = true;
-			*c->user = NULL; /* Same as above */
-			c->user = NULL;
-		}
-		c = c->next;
-	}
-
-	/* Run a merge pass to combine all areas into one */
-	target_merge_working_areas(target);
-
-	print_wa_layout(target);
-}
-
-void target_free_all_working_areas(struct target *target)
-{
-	target_free_all_working_areas_restore(target, 1);
-}
-
-/* Find the largest number of bytes that can be allocated */
-uint32_t target_get_working_area_avail(struct target *target)
-{
-	struct working_area *c = target->working_areas;
-	uint32_t max_size = 0;
-
-	if (c == NULL)
-		return target->working_area_size;
-
-	while (c) {
-		if (c->free && max_size < c->size)
-			max_size = c->size;
-
-		c = c->next;
-	}
-
-	return max_size;
 }
 
 int target_arch_state(struct target *target)
@@ -2792,6 +2855,8 @@ COMMAND_HANDLER(handle_reg_command)
 			for (i = 0, reg = cache->reg_list;
 					i < cache->num_regs;
 					i++, reg++, count++) {
+				if (reg->exist == false)
+					continue;
 				/* only print cached values if they are valid */
 				if (reg->exist) {
 					if (reg->valid) {
@@ -2847,13 +2912,14 @@ COMMAND_HANDLER(handle_reg_command)
 		/* access a single register by its name */
 		reg = register_get_by_name(target->reg_cache, CMD_ARGV[0], 1);
 
-		if (!reg) {
-			command_print(CMD_CTX, "register %s not found in current target", CMD_ARGV[0]);
-			return ERROR_OK;
-		}
+		if (!reg)
+			goto not_found;
 	}
 
 	assert(reg != NULL); /* give clang a hint that we *know* reg is != NULL here */
+
+	if (!reg->exist)
+		goto not_found;
 
 	/* display a register */
 	if ((CMD_ARGC == 1) || ((CMD_ARGC == 2) && !((CMD_ARGV[1][0] >= '0')
@@ -2898,6 +2964,10 @@ COMMAND_HANDLER(handle_reg_command)
 	}
 
 	return ERROR_COMMAND_SYNTAX_ERROR;
+
+not_found:
+	command_print(CMD_CTX, "register %s not found in current target", CMD_ARGV[0]);
+	return ERROR_OK;
 }
 
 COMMAND_HANDLER(handle_poll_command)
@@ -3692,38 +3762,31 @@ static int handle_bp_command_set(struct command_context *cmd_ctx,
 
 	if (asid == 0) {
 		retval = breakpoint_add(target, addr, length, hw);
+		/* error is always logged in breakpoint_add(), do not print it again */
 		if (ERROR_OK == retval)
 			command_print(cmd_ctx, "breakpoint set at " TARGET_ADDR_FMT "", addr);
-		else {
-			LOG_ERROR("Failure setting breakpoint, the same address(IVA) is already used");
-			return retval;
-		}
+
 	} else if (addr == 0) {
 		if (target->type->add_context_breakpoint == NULL) {
-			LOG_WARNING("Context breakpoint not available");
-			return ERROR_OK;
+			LOG_ERROR("Context breakpoint not available");
+			return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 		}
 		retval = context_breakpoint_add(target, asid, length, hw);
+		/* error is always logged in context_breakpoint_add(), do not print it again */
 		if (ERROR_OK == retval)
 			command_print(cmd_ctx, "Context breakpoint set at 0x%8.8" PRIx32 "", asid);
-		else {
-			LOG_ERROR("Failure setting breakpoint, the same address(CONTEXTID) is already used");
-			return retval;
-		}
+
 	} else {
 		if (target->type->add_hybrid_breakpoint == NULL) {
-			LOG_WARNING("Hybrid breakpoint not available");
-			return ERROR_OK;
+			LOG_ERROR("Hybrid breakpoint not available");
+			return ERROR_TARGET_RESOURCE_NOT_AVAILABLE;
 		}
 		retval = hybrid_breakpoint_add(target, addr, asid, length, hw);
+		/* error is always logged in hybrid_breakpoint_add(), do not print it again */
 		if (ERROR_OK == retval)
 			command_print(cmd_ctx, "Hybrid breakpoint set at 0x%8.8" PRIx32 "", asid);
-		else {
-			LOG_ERROR("Failure setting breakpoint, the same address is already used");
-			return retval;
-		}
 	}
-	return ERROR_OK;
+	return retval;
 }
 
 COMMAND_HANDLER(handle_bp_command)
@@ -4550,6 +4613,7 @@ enum target_cfg_param {
 	TCFG_DBGBASE,
 	TCFG_RTOS,
 	TCFG_DEFER_EXAMINE,
+	TCFG_GDB_PORT,
 };
 
 static Jim_Nvp nvp_config_opts[] = {
@@ -4565,6 +4629,7 @@ static Jim_Nvp nvp_config_opts[] = {
 	{ .name = "-dbgbase",          .value = TCFG_DBGBASE },
 	{ .name = "-rtos",             .value = TCFG_RTOS },
 	{ .name = "-defer-examine",    .value = TCFG_DEFER_EXAMINE },
+	{ .name = "-gdb-port",         .value = TCFG_GDB_PORT },
 	{ .name = NULL, .value = -1 }
 };
 
@@ -4791,7 +4856,7 @@ no_params:
 				if (goi->argc != 0)
 					goto no_params;
 			}
-			Jim_SetResult(goi->interp, Jim_NewIntObj(goi->interp, target->working_area_size));
+			Jim_SetResult(goi->interp, Jim_NewIntObj(goi->interp, target->coreid));
 			/* loop for more */
 			break;
 
@@ -4852,6 +4917,20 @@ no_params:
 			/* loop for more */
 			break;
 
+		case TCFG_GDB_PORT:
+			if (goi->isconfigure) {
+				const char *s;
+				e = Jim_GetOpt_String(goi, &s, NULL);
+				if (e != JIM_OK)
+					return e;
+				target->gdb_port_override = strdup(s);
+			} else {
+				if (goi->argc != 0)
+					goto no_params;
+			}
+			Jim_SetResultString(goi->interp, target->gdb_port_override ? : "undefined", -1);
+			/* loop for more */
+			break;
 		}
 	} /* while (goi->argc) */
 
@@ -5626,6 +5705,8 @@ static int target_create(Jim_GetOptInfo *goi)
 	target->rtos = NULL;
 	target->rtos_auto_detect = false;
 
+	target->gdb_port_override = NULL;
+
 	/* Do the rest as "configure" options */
 	goi->isconfigure = 1;
 	e = target_configure(goi, target);
@@ -5648,6 +5729,7 @@ static int target_create(Jim_GetOptInfo *goi)
 	}
 
 	if (e != JIM_OK) {
+		free(target->gdb_port_override);
 		free(target->type);
 		free(target);
 		return e;
@@ -5665,6 +5747,7 @@ static int target_create(Jim_GetOptInfo *goi)
 		e = (*(target->type->target_create))(target, goi->interp);
 		if (e != ERROR_OK) {
 			LOG_DEBUG("target_create failed");
+			free(target->gdb_port_override);
 			free(target->type);
 			free(target->cmd_name);
 			free(target);
@@ -5767,6 +5850,7 @@ static int jim_target_smp(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 	int i;
 	const char *targetname;
 	int retval, len;
+	static int smp_group = 1;
 	struct target *target = (struct target *) NULL;
 	struct target_list *head, *curr, *new;
 	curr = (struct target_list *) NULL;
@@ -5802,10 +5886,11 @@ static int jim_target_smp(Jim_Interp *interp, int argc, Jim_Obj *const *argv)
 
 	while (curr != (struct target_list *)NULL) {
 		target = curr->target;
-		target->smp = 1;
+		target->smp = smp_group;
 		target->head = head;
 		curr = curr->next;
 	}
+	smp_group++;
 
 	if (target && target->rtos)
 		retval = rtos_smp_init(head->target);
@@ -5832,11 +5917,11 @@ static const struct command_registration target_subcommand_handlers[] = {
 		.mode = COMMAND_CONFIG,
 		.handler = handle_target_init_command,
 		.help = "initialize targets",
+		.usage = "",
 	},
 	{
 		.name = "create",
-		/* REVISIT this should be COMMAND_CONFIG ... */
-		.mode = COMMAND_ANY,
+		.mode = COMMAND_CONFIG,
 		.jim_handler = jim_target_create,
 		.usage = "name type '-chain-position' name [options ...]",
 		.help = "Creates and selects a new target",
@@ -6039,8 +6124,8 @@ static const struct command_registration target_command_handlers[] = {
 		.name = "target",
 		.mode = COMMAND_CONFIG,
 		.help = "configure target",
-
 		.chain = target_subcommand_handlers,
+		.usage = "",
 	},
 	COMMAND_REGISTRATION_DONE
 };
