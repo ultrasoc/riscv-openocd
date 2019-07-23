@@ -12,10 +12,10 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
-#include <netinet/tcp.h>
 #endif
 
 #include "ust_tcf.h"
+#include "../ust_common/network.h"
 
 #define RECV_BUFFER_DEFAULT_CAPACITY 1024
 #define PKT_DATA_DEFAULT_CAPACITY 1024
@@ -113,10 +113,7 @@ int ust_tcf_connect(ust_tcf_t *s, const char *host, const char *port) {
 		if (s->skt == -1)
 			continue;
 
-		/* Debug messages tend to be small containing only 4 bytes of data, this does not fill a TCP
-		   packet. Disable the "Nagle" algorithm so all data gets sent immediatly */
-		char flag = 1;
-		setsockopt(s->skt, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(int));
+        EnableTcpNoDelay(s->skt);
 
 		rc = connect(s->skt, addr->ai_addr, addr->ai_addrlen);
 		if (rc != -1)
@@ -192,14 +189,8 @@ int ust_tcf_run_cmd(ust_tcf_t *s, char *label, char *function, char *data, int d
 	LOG_DEBUG_IO("Sending tcf cmd: %s %s %s %s %s", header, token, label, function, data);
 
 	bytes_sent = send(s->skt, buffer, len, 0);
-#ifndef _WIN32
-	/* This disables delayed acks, windows does not support this option, BUT does disable
-	   delayed acks on loopback adapter. NOTE: Change is not permanent so needs resetting
-	   after all TCP socket communications */
-	char flag = 1;
-	setsockopt(s->skt, IPPROTO_TCP, TCP_QUICKACK, &flag, sizeof(int));
-#endif
-
+    EnableQuickAck(s->skt);
+    
 	if (bytes_sent != len) {
 		LOG_ERROR("sent %d bytes expected to send %d\n", bytes_sent, len);
 		return ERROR_FAIL;
@@ -215,13 +206,7 @@ static int do_recv(int skt, char *buffer, size_t len) {
 
 	while (remaining > 0) {
 		int recv_len = recv(skt, buffer + length, remaining, 0);
-#ifndef _WIN32
-		/* This disables delayed acks, windows does not support this option, BUT does disable
-		   delayed acks on loopback adapter. NOTE: Change is not permanent so needs resetting
-		after all TCP socket communications */
-		char flag = 1;
-		setsockopt(skt, IPPROTO_TCP, TCP_QUICKACK, &flag, sizeof(int));
-#endif
+        EnableQuickAck(skt);
 
 		if (recv_len <= 0) {
 			/* Check the errno */

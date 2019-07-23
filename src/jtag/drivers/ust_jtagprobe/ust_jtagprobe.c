@@ -3,6 +3,7 @@
 #endif
 
 #include "ust_jtagprobe.h"
+#include "../ust_common/network.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -16,6 +17,8 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #endif
+
+
 
 typedef struct ust_jtagprobe_t {
 	int skt;
@@ -53,6 +56,8 @@ int ust_jtagprobe_connect(ust_jtagprobe_t *s, const char *host, const char *port
 		if (s->skt == -1) 
 			continue;
 		rc = connect(s->skt, addr->ai_addr, addr->ai_addrlen);
+        EnableTcpNoDelay(s->skt);
+        
 		if (rc != -1) 
 			break;
 		close(s->skt);
@@ -100,6 +105,7 @@ int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, in
 	len += bytelen;
 
 	bytes_sent = send(s->skt, buffer, len, 0);
+    EnableQuickAck(s->skt);
 	
 	if (bytes_sent != len) {
 		LOG_ERROR("sent %d bytes expected to send %d\n", bytes_sent, len);
@@ -133,6 +139,7 @@ int	 ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, u
 	}
 
 	bytes_sent = send(s->skt, buffer, len, 0);
+    EnableQuickAck(s->skt);
 
 	if (bytes_sent != len) {
 		LOG_ERROR("sent %d bytes expected to send %d\n", bytes_sent, len);
@@ -157,6 +164,14 @@ int ust_jtagprobe_recv_scan(ust_jtagprobe_t *s, int bit_length, uint8_t *bits) {
 		LOG_ERROR("sw_link len %d\n", (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3]);
 		return ERROR_FAIL;
 	}
+	
+	#ifndef _WIN32
+		/* This disables delayed acks, windows does not support this option, BUT does disable
+		   delayed acks on loopback adapter. NOTE: Change is not permanent so needs resetting
+		   after all TCP socket communications */
+		char flag = 1;
+		setsockopt(s->skt, IPPROTO_TCP, TCP_QUICKACK, &flag, sizeof(int));
+	#endif
 
 	memcpy(bits, buffer+4, bytelen);
 
