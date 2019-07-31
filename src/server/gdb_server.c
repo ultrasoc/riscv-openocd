@@ -390,8 +390,12 @@ static int gdb_put_packet_inner(struct connection *connection,
 			gdb_putback_char(connection, reply);
 			LOG_DEBUG("Unexpected start of new packet");
 			break;
-		}
-
+		} else if (reply == '\3') {
+            // Pending Ctrl-C
+            gdb_putback_char(connection, reply);
+            break;
+        }
+            
 		LOG_DEBUG("Discard unexpected char %c", reply);
 	}
 #endif
