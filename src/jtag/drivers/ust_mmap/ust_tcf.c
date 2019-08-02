@@ -113,7 +113,7 @@ int ust_tcf_connect(ust_tcf_t *s, const char *host, const char *port) {
 		if (s->skt == -1)
 			continue;
 
-        EnableTcpNoDelay(s->skt);
+		EnableTcpNoDelay(s->skt);
 
 		rc = connect(s->skt, addr->ai_addr, addr->ai_addrlen);
 		if (rc != -1)
@@ -189,7 +189,7 @@ int ust_tcf_run_cmd(ust_tcf_t *s, char *label, char *function, char *data, int d
 	LOG_DEBUG_IO("Sending tcf cmd: %s %s %s %s %s", header, token, label, function, data);
 
 	bytes_sent = send(s->skt, buffer, len, 0);
-    EnableQuickAck(s->skt);
+	EnableQuickAck(s->skt);
     
 	if (bytes_sent != len) {
 		LOG_ERROR("sent %d bytes expected to send %d\n", bytes_sent, len);
@@ -206,7 +206,7 @@ static int do_recv(int skt, char *buffer, size_t len) {
 
 	while (remaining > 0) {
 		int recv_len = recv(skt, buffer + length, remaining, 0);
-        EnableQuickAck(skt);
+		EnableQuickAck(skt);
 
 		if (recv_len <= 0) {
 			/* Check the errno */

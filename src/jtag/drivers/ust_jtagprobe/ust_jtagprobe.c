@@ -56,7 +56,7 @@ int ust_jtagprobe_connect(ust_jtagprobe_t *s, const char *host, const char *port
 		if (s->skt == -1) 
 			continue;
 		rc = connect(s->skt, addr->ai_addr, addr->ai_addrlen);
-        EnableTcpNoDelay(s->skt);
+		EnableTcpNoDelay(s->skt);
         
 		if (rc != -1) 
 			break;
@@ -105,7 +105,7 @@ int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, in
 	len += bytelen;
 
 	bytes_sent = send(s->skt, buffer, len, 0);
-    EnableQuickAck(s->skt);
+	EnableQuickAck(s->skt);
 	
 	if (bytes_sent != len) {
 		LOG_ERROR("sent %d bytes expected to send %d\n", bytes_sent, len);
@@ -139,7 +139,7 @@ int	 ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, u
 	}
 
 	bytes_sent = send(s->skt, buffer, len, 0);
-    EnableQuickAck(s->skt);
+	EnableQuickAck(s->skt);
 
 	if (bytes_sent != len) {
 		LOG_ERROR("sent %d bytes expected to send %d\n", bytes_sent, len);
@@ -158,6 +158,7 @@ int ust_jtagprobe_recv_scan(ust_jtagprobe_t *s, int bit_length, uint8_t *bits) {
 
 	do {
 		recv_len += recv(s->skt, buffer + recv_len, msglen - recv_len, 0);
+		EnableQuickAck(s->skt);
 	} while (recv_len < msglen);
 	if (recv_len != msglen) {
 		LOG_ERROR("received %d bytes expected %d\n", recv_len, msglen);
@@ -165,14 +166,6 @@ int ust_jtagprobe_recv_scan(ust_jtagprobe_t *s, int bit_length, uint8_t *bits) {
 		return ERROR_FAIL;
 	}
 	
-	#ifndef _WIN32
-		/* This disables delayed acks, windows does not support this option, BUT does disable
-		   delayed acks on loopback adapter. NOTE: Change is not permanent so needs resetting
-		   after all TCP socket communications */
-		char flag = 1;
-		setsockopt(s->skt, IPPROTO_TCP, TCP_QUICKACK, &flag, sizeof(int));
-	#endif
-
 	memcpy(bits, buffer+4, bytelen);
 
 	return ERROR_OK;
