@@ -6,8 +6,10 @@
 #include "ust_tcf.h"
 
 #define MAX_DMA_NAME_SIZE (7)
-#define MAX_FUNCTION_NAME_SIZE (15)
+#define MAX_FUNCTION_NAME_SIZE (32)
 #define MAX_DATA_SIZE (128)
+
+extern bool sendFilterConfigure;
 
 typedef struct ust_mmap_t
 {
@@ -59,6 +61,37 @@ int ust_mmap_check_memory_service(ust_mmap_t *s) {
 	}
 }
 
+int ust_mmap_initialise_filter(ust_mmap_t *s, const char *filter) {
+	char function[MAX_FUNCTION_NAME_SIZE];
+	char send_data[MAX_DATA_SIZE];
+	int size;
+	int err;
+	char *resp;
+	int resp_len;
+
+	size = snprintf(function, sizeof(function), "set-prop(%s)", s->dma_name);
+	if (size >= (int)sizeof(function)) {
+		LOG_ERROR("Function name larger than buffer");
+		return ERROR_FAIL;
+	}
+
+	size = snprintf(send_data, sizeof(send_data), "filter=%s->%s", s->dma_name,
+					filter);
+	if (size >= (int)sizeof(send_data)) {
+		LOG_ERROR("Data larger than buffer");
+		return ERROR_FAIL;
+	}
+
+	ust_tcf_run_cmd(s->tcf, "ddma", function, send_data, size + 1);
+	err = ust_tcf_wait_for_response(s->tcf, &resp, &resp_len);
+	if (err != ERROR_OK) {
+		LOG_ERROR("tcf response gives error");
+		return err;
+	}
+
+	return ERROR_OK;
+}
+
 int ust_mmap_disconnect(ust_mmap_t *s)
 {
 	return ust_tcf_disconnect(s->tcf);
@@ -78,7 +111,8 @@ int ust_mmap_read(ust_mmap_t *s, uint64_t addr, int byte_len, uint64_t *value)
 		LOG_ERROR("Invalid byte_len = %d. Expected 0 < byte_len <= 8", byte_len);
 	}
 
-	size = snprintf(function, MAX_FUNCTION_NAME_SIZE, "read(%s)", s->dma_name);
+	size = snprintf(function, MAX_FUNCTION_NAME_SIZE, "read(%s%s)", s->dma_name,
+			sendFilterConfigure ? ",fltr" : "");
 	if (size >= MAX_FUNCTION_NAME_SIZE) {
 		LOG_ERROR("Function name larger than buffer");
 		return ERROR_FAIL;
@@ -136,7 +170,9 @@ int ust_mmap_write(ust_mmap_t *s, uint64_t addr, int byte_len, uint64_t value)
 		return ERROR_FAIL;
 	}
 
-	size = snprintf(function, MAX_FUNCTION_NAME_SIZE, "write(%s)", s->dma_name);
+	size = snprintf(function, MAX_FUNCTION_NAME_SIZE, "write(%s%s)", s->dma_name,
+			sendFilterConfigure ? ",fltr" : "");
+
 	if (size >= MAX_FUNCTION_NAME_SIZE) {
 		LOG_ERROR("Function name larger than buffer");
 		return ERROR_FAIL;

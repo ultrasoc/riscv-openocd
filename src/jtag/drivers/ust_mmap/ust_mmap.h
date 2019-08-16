@@ -10,6 +10,7 @@ void ust_mmap_destroy(ust_mmap_t *s);
 int ust_mmap_connect(ust_mmap_t *s, const char *host, const char *port);
 int ust_mmap_disconnect(ust_mmap_t *s);
 int ust_mmap_check_memory_service(ust_mmap_t *s);
+int ust_mmap_initialise_filter(ust_mmap_t *s, const char *filter);
 int ust_mmap_read(ust_mmap_t *s, uint64_t addr, int byte_len, uint64_t *value);
 int ust_mmap_write(ust_mmap_t *s, uint64_t addr, int byte_len, uint64_t value);
 int ust_mmap_test(ust_mmap_t *s);

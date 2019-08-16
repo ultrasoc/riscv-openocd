@@ -208,7 +208,7 @@ int ust_tcf_run_cmd(ust_tcf_t *s, char *label, char *function, char *data, int d
 	}
 }
 
-#define TRACE_RECV
+//#define TRACE_RECV
 
 static int do_recv(int skt, char *buffer, size_t len, char *text) {
 	int remaining = len;
