@@ -48,7 +48,7 @@ typedef struct ust_tcf_pkt_t {
 } ust_tcf_pkt_t;
 
 typedef struct ust_tcf_t {
-	int skt; 
+	int skt;
 	int token_count;
 	char *recv_buffer;
 	unsigned long recv_buffer_size;
@@ -199,12 +199,17 @@ int ust_tcf_run_cmd(ust_tcf_t *s, char *label, char *function, char *data, int d
 	}
 }
 
+//#define TRACE_RECV
 
-static int do_recv(int skt, char *buffer, size_t len) {
+static int do_recv(int skt, char *buffer, size_t len, char *text) {
 	int remaining = len;
 	int length = 0;
 
-	while (remaining > 0) {
+#ifdef TRACE_RECV
+    fprintf(stderr, "OCDRECV %s len=%llu\n", text, len);
+#endif
+
+    while (remaining > 0) {
 		int recv_len = recv(skt, buffer + length, remaining, 0);
 		EnableQuickAck(skt);
 
@@ -217,6 +222,23 @@ static int do_recv(int skt, char *buffer, size_t len) {
 		remaining -= recv_len;
 		length += recv_len;
 	}
+#ifdef TRACE_RECV
+    {
+        size_t i;
+        fprintf(stderr, "OCDRECV %s: ", text);
+        for (i = 0; i < len; i++) {
+            uint8_t byte = *(buffer+i);
+            if (!isprint(byte)) {
+                fprintf(stderr, "(%02x)", byte);
+            } else {
+                fprintf(stderr, "%c", byte);
+            }
+        }
+        fprintf(stderr, "\n");
+        fflush(stderr);
+    }
+#endif
+
 	return ERROR_OK;
 }
 
@@ -228,7 +250,7 @@ static int recv_pkt(ust_tcf_t *s)
 	int err;
 	// The header is at least 4 bytes long
 	length = 4;
-	err = do_recv(s->skt, header, length);
+	err = do_recv(s->skt, header, length, "HEADER");
 	if (err != ERROR_OK) {
 		LOG_ERROR("Failed to receive tcf header");
 		return err;
@@ -242,7 +264,7 @@ static int recv_pkt(ust_tcf_t *s)
 		if (length >= MAX_HEADER_SIZE) {
 			LOG_ERROR("Malformed TCF packet, missing ]");
 		}
-		err = do_recv(s->skt, header + length, 1);
+		err = do_recv(s->skt, header + length, 1, "HEADER_ERR");
 		if (err != ERROR_OK) {
 			LOG_ERROR("Failed to recv tcf header");
 			return err;
@@ -264,7 +286,7 @@ static int recv_pkt(ust_tcf_t *s)
 		}
 	}
 
-	err = do_recv(s->skt, s->recv_buffer, payload_len);
+	err = do_recv(s->skt, s->recv_buffer, payload_len, "PAYLOAD");
 	if (err != ERROR_OK) {
 		LOG_ERROR("Failed to receive tcf payload");
 		return err;

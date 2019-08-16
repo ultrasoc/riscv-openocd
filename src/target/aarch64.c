@@ -1117,7 +1117,7 @@ static int aarch64_post_debug_entry(struct target *target)
  * single-step a target
  */
 static int aarch64_step_internal(struct target *target, int current, target_addr_t address,
-	int handle_breakpoints, int debug_execution) 
+	int handle_breakpoints, int debug_execution)
 {
 	struct armv8_common *armv8 = target_to_armv8(target);
 	struct aarch64_common *aarch64 = target_to_aarch64(target);
@@ -1817,7 +1817,7 @@ static int aarch64_set_watchpoint(struct target *target,
 
 	LOG_DEBUG("wp %i control 0x%0" PRIx32 " value 0x%" TARGET_PRIxADDR, wp_i,
 		wp_list[wp_i].control,
-		wp_list[wp_i].value); 
+		wp_list[wp_i].value);
 
 	/* Ensure that halting debug mode is enable */
 	retval = aarch64_set_dscr_bits(target, DSCR_HDE, DSCR_HDE);

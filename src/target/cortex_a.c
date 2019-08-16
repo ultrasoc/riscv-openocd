@@ -23,6 +23,9 @@
  *   Copyright (C) 2013 Kamal Dasu                                         *
  *   kdasu.kdev@gmail.com                                                  *
  *                                                                         *
+ *   Copyright (C) 2016 Chengyu Zheng                                      *
+ *   chengyu.zheng@polimi.it : watchpoint support                          *
+ *                                                                         *
  *   This program is free software; you can redistribute it and/or modify  *
  *   it under the terms of the GNU General Public License as published by  *
  *   the Free Software Foundation; either version 2 of the License, or     *
@@ -59,6 +62,7 @@
 #include "smp.h"
 #include <helper/time_support.h>
 
+static unsigned int ilog2(unsigned int x);
 static int cortex_a_poll(struct target *target);
 static int cortex_a_debug_entry(struct target *target);
 static int cortex_a_restore_context(struct target *target, bool bpwp);
@@ -82,6 +86,11 @@ static int cortex_a_virt2phys(struct target *target,
 	target_addr_t virt, target_addr_t *phys);
 static int cortex_a_read_cpu_memory(struct target *target,
 	uint32_t address, uint32_t size, uint32_t count, uint8_t *buffer);
+static int cortex_a_write_phys_memory(struct target *target,
+	target_addr_t address, uint32_t size,
+	uint32_t count, const uint8_t *buffer);
+static int cortex_a_step(struct target *target, int current, target_addr_t address,
+	int handle_breakpoints);
 
 
 static unsigned int ilog2(unsigned int x)
@@ -627,7 +636,7 @@ static int cortex_a_dpm_setup(struct cortex_a_common *a, uint32_t didr)
 
 	dpm->bpwp_enable = cortex_a_bpwp_enable;
 	dpm->bpwp_disable = cortex_a_bpwp_disable;
-    
+
 	retval = arm_dpm_setup(dpm);
 	if (retval == ERROR_OK)
 		retval = arm_dpm_initialize(dpm);
@@ -1032,7 +1041,7 @@ static int cortex_a_debug_entry(struct target *target)
 
 	/* Examine debug reason */
 	arm_dpm_report_dscr(&armv7a->dpm, cortex_a->cpudbg_dscr);
-    
+
 	/* save address of instruction that triggered the watchpoint? */
 	if (target->debug_reason == DBG_REASON_WATCHPOINT) {
 		uint32_t wfar;
@@ -1372,13 +1381,38 @@ static int cortex_a_set_breakpoint(struct target *target,
 						breakpoint->length);
 		}
 
-		retval = target_write_memory(target,
-				breakpoint->address & 0xFFFFFFFE,
+		int mmu_enabled = 0;
+		target_addr_t phys;
+		/* determine if MMU was enabled on target stop */
+		if (!armv7a->is_armv7r) {
+			retval = cortex_a_mmu(target, &mmu_enabled);
+			if (retval != ERROR_OK)
+				return retval;
+		}
+
+		if (mmu_enabled) {
+			retval = cortex_a_virt2phys(target, breakpoint->address, &phys);
+			if (retval != ERROR_OK) {
+				LOG_ERROR("Failed to translate from virtual to physical address for breakpoint");
+				return retval;
+			}
+
+			LOG_DEBUG("Writing to virtual address. "
+					  "Translating v:" TARGET_ADDR_FMT " to r:" TARGET_ADDR_FMT,
+					  breakpoint->address,
+					  phys);
+		}
+
+		retval = cortex_a_write_phys_memory(target,
+				phys & 0xFFFFFFFE,
 				breakpoint->length, 1, code);
-		if (retval != ERROR_OK)
+		if (retval != ERROR_OK) {
+			LOG_ERROR("Failed to insert soft breakpoint");
 			return retval;
+		}
 
 		/* update i-cache at breakpoint location */
+		armv7a_l2x_cache_inval_virt(target, breakpoint->address, breakpoint->length);
 		armv7a_l1_d_cache_inval_virt(target, breakpoint->address,
 					breakpoint->length);
 		armv7a_l1_i_cache_inval_virt(target, breakpoint->address,
@@ -1610,22 +1644,49 @@ static int cortex_a_unset_breakpoint(struct target *target, struct breakpoint *b
 						breakpoint->length);
 		}
 
-		/* restore original instruction (kept in target endianness) */
-		if (breakpoint->length == 4) {
-			retval = target_write_memory(target,
-					breakpoint->address & 0xFFFFFFFE,
-					4, 1, breakpoint->orig_instr);
-			if (retval != ERROR_OK)
-				return retval;
-		} else {
-			retval = target_write_memory(target,
-					breakpoint->address & 0xFFFFFFFE,
-					2, 1, breakpoint->orig_instr);
+		int mmu_enabled = 0;
+		target_addr_t phys;
+		/* determine if MMU was enabled on target stop */
+		if (!armv7a->is_armv7r) {
+			retval = cortex_a_mmu(target, &mmu_enabled);
 			if (retval != ERROR_OK)
 				return retval;
 		}
 
+		if (mmu_enabled) {
+			retval = cortex_a_virt2phys(target, breakpoint->address, &phys);
+			if (retval != ERROR_OK) {
+				LOG_ERROR("Failed to translate from virtual to physical address for breakpoint");
+				return retval;
+			}
+
+			LOG_DEBUG("Writing to virtual address. "
+					  "Translating v:" TARGET_ADDR_FMT " to r:" TARGET_ADDR_FMT,
+					  breakpoint->address,
+					  phys);
+		}
+
+		/* restore original instruction (kept in target endianness) */
+		if (breakpoint->length == 4) {
+			retval = cortex_a_write_phys_memory(target,
+					phys & 0xFFFFFFFE,
+					4, 1, breakpoint->orig_instr);
+			if (retval != ERROR_OK) {
+				LOG_ERROR("Failed to restore instruction, length = 4");
+				return retval;
+			}
+		} else {
+			retval = cortex_a_write_phys_memory(target,
+					phys & 0xFFFFFFFE,
+					2, 1, breakpoint->orig_instr);
+			if (retval != ERROR_OK) {
+				LOG_ERROR("Failed to restore instruction, length = 2");
+				return retval;
+			}
+		}
+
 		/* update i-cache at breakpoint location */
+		armv7a_l2x_cache_inval_virt(target, breakpoint->address, breakpoint->length);
 		armv7a_l1_d_cache_inval_virt(target, breakpoint->address,
 						 breakpoint->length);
 		armv7a_l1_i_cache_inval_virt(target, breakpoint->address,
@@ -2739,14 +2800,24 @@ static int cortex_a_read_memory(struct target *target, target_addr_t address,
 	uint32_t size, uint32_t count, uint8_t *buffer)
 {
 	int retval;
+	target_addr_t phys;
 
 	/* cortex_a handles unaligned memory access */
 	LOG_DEBUG("Reading memory at address " TARGET_ADDR_FMT "; size %" PRId32 "; count %" PRId32,
 		address, size, count);
 
-	cortex_a_prep_memaccess(target, 0);
-	retval = cortex_a_read_cpu_memory(target, address, size, count, buffer);
-	cortex_a_post_memaccess(target, 0);
+	armv7a_cache_auto_flush_on_read(target, address, size * count);
+
+	retval = cortex_a_virt2phys(target, address, &phys);
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Failed to translate address from virtual to physical");
+		return retval;
+	}
+	retval = cortex_a_read_phys_memory(target, phys, size, count, buffer);
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Failed to read phys memory");
+		return retval;
+	}
 
 	return retval;
 }
@@ -2775,6 +2846,7 @@ static int cortex_a_write_memory(struct target *target, target_addr_t address,
 	uint32_t size, uint32_t count, const uint8_t *buffer)
 {
 	int retval;
+	target_addr_t phys;
 
 	/* cortex_a handles unaligned memory access */
 	LOG_DEBUG("Writing memory at address " TARGET_ADDR_FMT "; size %" PRId32 "; count %" PRId32,
@@ -2783,9 +2855,17 @@ static int cortex_a_write_memory(struct target *target, target_addr_t address,
 	/* memory writes bypass the caches, must flush before writing */
 	armv7a_cache_auto_flush_on_write(target, address, size * count);
 
-	cortex_a_prep_memaccess(target, 0);
-	retval = cortex_a_write_cpu_memory(target, address, size, count, buffer);
-	cortex_a_post_memaccess(target, 0);
+	retval = cortex_a_virt2phys(target, address, &phys);
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Failed to translate address from virtual to physical");
+		return retval;
+	}
+	retval = cortex_a_write_phys_memory(target, phys, size, count, buffer);
+	if (retval != ERROR_OK) {
+		LOG_ERROR("Failed to write phys memory");
+		return retval;
+	}
+
 	return retval;
 }
 

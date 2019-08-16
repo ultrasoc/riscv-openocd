@@ -27,6 +27,7 @@
 #include "program.h"
 #include "asm.h"
 #include "batch.h"
+#include "transport/transport.h"
 
 #define DMI_DATA1 (DMI_DATA0 + 1)
 #define DMI_PROGBUF1 (DMI_PROGBUF0 + 1)
@@ -406,41 +407,51 @@ static void dump_field(int idle, const struct scan_field *field)
 
 static void select_dmi(struct target *target)
 {
-	if (bscan_tunnel_ir_width != 0) {
-		select_dmi_via_bscan(target);
-		return;
-	}
+	if( !transport_is_mmap()) {
+		if (bscan_tunnel_ir_width != 0) {
+			select_dmi_via_bscan(target);
+			return;
+		}
 	jtag_add_ir_scan(target->tap, &select_dbus, TAP_IDLE);
+	}
 }
 
-static uint32_t dtmcontrol_scan(struct target *target, uint32_t out)
+uint32_t dtmcontrol_scan(struct target *target, uint32_t out)
 {
 	struct scan_field field;
 	uint8_t in_value[4];
 	uint8_t out_value[4];
+	uint32_t in = 0;
 
-	if (bscan_tunnel_ir_width != 0)
-		return dtmcontrol_scan_via_bscan(target, out);
+	if( !transport_is_mmap()) {
+		if (bscan_tunnel_ir_width != 0)
+			return dtmcontrol_scan_via_bscan(target, out);
 
-	buf_set_u32(out_value, 0, 32, out);
+		buf_set_u32(out_value, 0, 32, out);
 
-	jtag_add_ir_scan(target->tap, &select_dtmcontrol, TAP_IDLE);
+		jtag_add_ir_scan(target->tap, &select_dtmcontrol, TAP_IDLE);
 
-	field.num_bits = 32;
-	field.out_value = out_value;
-	field.in_value = in_value;
-	jtag_add_dr_scan(target->tap, 1, &field, TAP_IDLE);
+		field.num_bits = 32;
+		field.out_value = out_value;
+		field.in_value = in_value;
+		jtag_add_dr_scan(target->tap, 1, &field, TAP_IDLE);
 
-	/* Always return to dmi. */
-	select_dmi(target);
+		/* Always return to dmi. */
+		select_dmi(target);
 
-	int retval = jtag_execute_queue();
-	if (retval != ERROR_OK) {
-		LOG_ERROR("failed jtag scan: %d", retval);
-		return retval;
+		int retval = jtag_execute_queue();
+		if (retval != ERROR_OK) {
+			LOG_ERROR("failed jtag scan: %d", retval);
+			return retval;
+		}
+
+		in = buf_get_u32(field.in_value, 0, 32);
 	}
-
-	uint32_t in = buf_get_u32(field.in_value, 0, 32);
+	else
+	{
+		extern uint32_t emulate_dtmcontrol_scan(struct target *target, uint32_t out);
+		in = emulate_dtmcontrol_scan( target, out );
+	}
 	LOG_DEBUG("DTMCS: 0x%x -> 0x%x", out, in);
 
 	return in;
@@ -669,29 +680,62 @@ static int dmi_op(struct target *target, uint32_t *data_in,
 
 static int dmi_read(struct target *target, uint32_t *value, uint32_t address)
 {
-	return dmi_op(target, value, NULL, DMI_OP_READ, address, 0, false);
+	if( !transport_is_mmap()) {
+		return dmi_op(target, value, NULL, DMI_OP_READ, address, 0, false);
+	} else {
+		extern uint32_t riscv_mmap_read32( uint64_t );
+		uint32_t tvalue = riscv_mmap_read32( address );
+		if (value)
+			*value = tvalue;
+		return ERROR_OK;
+	}
 }
 
 static int dmi_read_exec(struct target *target, uint32_t *value, uint32_t address)
 {
-	return dmi_op(target, value, NULL, DMI_OP_READ, address, 0, true);
+	if( !transport_is_mmap()) {
+		return dmi_op(target, value, NULL, DMI_OP_READ, address, 0, true);
+	} else {
+		extern uint32_t riscv_mmap_read32( uint64_t );
+		uint32_t tvalue = riscv_mmap_read32( address );
+		if (value)
+			*value = tvalue;
+		return ERROR_OK;
+	}
 }
 
 static int dmi_write(struct target *target, uint32_t address, uint32_t value)
 {
-	return dmi_op(target, NULL, NULL, DMI_OP_WRITE, address, value, false);
+	if( !transport_is_mmap()) {
+		return dmi_op(target, NULL, NULL, DMI_OP_WRITE, address, value, false);
+	} else {
+		extern uint32_t riscv_mmap_write32( uint64_t, uint32_t );
+		riscv_mmap_write32( address, value );
+		return ERROR_OK;
+	}
 }
 
 static int dmi_write_exec(struct target *target, uint32_t address, uint32_t value)
 {
-	return dmi_op(target, NULL, NULL, DMI_OP_WRITE, address, value, true);
+	if( !transport_is_mmap()) {
+		return dmi_op(target, NULL, NULL, DMI_OP_WRITE, address, value, true);
+	} else {
+		extern uint32_t riscv_mmap_write32( uint64_t, uint32_t );
+		riscv_mmap_write32( address, value );
+		return ERROR_OK;
+	}
 }
 
 int dmstatus_read_timeout(struct target *target, uint32_t *dmstatus,
 		bool authenticated, unsigned timeout_sec)
 {
-	int result = dmi_op_timeout(target, dmstatus, NULL, DMI_OP_READ,
-			DMI_DMSTATUS, 0, timeout_sec, false);
+	int result = ERROR_OK;
+	if( !transport_is_mmap())
+		result = dmi_op_timeout(target, dmstatus, NULL, DMI_OP_READ,
+					DMI_DMSTATUS, 0, timeout_sec, false);
+	else
+		result = dmi_read( target, dmstatus, DMI_DMSTATUS);
+
 	if (result != ERROR_OK)
 		return result;
 	if (authenticated && !get_field(*dmstatus, DMI_DMSTATUS_AUTHENTICATED)) {
@@ -825,7 +869,7 @@ static riscv_reg_t read_abstract_arg(struct target *target, unsigned index,
 		case 64:
 			dmi_read(target, &v, DMI_DATA0 + offset + 1);
 			value |= ((uint64_t) v) << 32;
-			/* falls through */
+			/* falls through *//* no break */
 		case 32:
 			dmi_read(target, &v, DMI_DATA0 + offset);
 			value |= v;
@@ -843,7 +887,7 @@ static int write_abstract_arg(struct target *target, unsigned index,
 			return ERROR_FAIL;
 		case 64:
 			dmi_write(target, DMI_DATA0 + offset + 1, value >> 32);
-			/* falls through */
+			/* falls through *//* no break */
 		case 32:
 			dmi_write(target, DMI_DATA0 + offset, value);
 	}
@@ -1875,14 +1919,14 @@ static void write_to_buf(uint8_t *buffer, uint64_t value, unsigned size)
 			buffer[6] = value >> 48;
 			buffer[5] = value >> 40;
 			buffer[4] = value >> 32;
-			/* falls through */
+			/* falls through *//* no break */
 		case 4:
 			buffer[3] = value >> 24;
 			buffer[2] = value >> 16;
-			/* falls through */
+			/* falls through *//* no break */
 		case 2:
 			buffer[1] = value >> 8;
-			/* falls through */
+			/* falls through *//* no break */
 		case 1:
 			buffer[0] = value;
 			break;
@@ -2243,137 +2287,159 @@ static int read_memory_progbuf_inner(struct target *target, target_addr_t addres
 	 * value in s0. */
 	riscv_addr_t read_addr = address + 2 * size;
 	riscv_addr_t fin_addr = address + (count * size);
-	while (read_addr < fin_addr) {
-		LOG_DEBUG("read_addr=0x%" PRIx64 ", fin_addr=0x%" PRIx64, read_addr,
-				fin_addr);
-		/* The pipeline looks like this:
-		 * memory -> s1 -> dm_data0 -> debugger
-		 * Right now:
-		 * s0 contains read_addr
-		 * s1 contains mem[read_addr-size]
-		 * dm_data0 contains[read_addr-size*2]
-		 */
+	unsigned skip = 1;
+	if( !transport_is_mmap()) {
+		while (read_addr < fin_addr) {
+			LOG_DEBUG("read_addr=0x%" PRIx64 ", fin_addr=0x%" PRIx64, read_addr,
+					fin_addr);
+			/* The pipeline looks like this:
+			 * memory -> s1 -> dm_data0 -> debugger
+			 * Right now:
+			 * s0 contains read_addr
+			 * s1 contains mem[read_addr-size]
+			 * dm_data0 contains[read_addr-size*2]
+			 */
 
-		LOG_DEBUG("creating burst to read from 0x%" PRIx64
-				" up to 0x%" PRIx64, read_addr, fin_addr);
-		assert(read_addr >= address && read_addr < fin_addr);
-		struct riscv_batch *batch = riscv_batch_alloc(target, 32,
-				info->dmi_busy_delay + info->ac_busy_delay);
+			LOG_DEBUG("creating burst to read from 0x%" PRIx64
+					" up to 0x%" PRIx64, read_addr, fin_addr);
+			assert(read_addr >= address && read_addr < fin_addr);
+			struct riscv_batch *batch = riscv_batch_alloc(target, 32,
+					info->dmi_busy_delay + info->ac_busy_delay);
 
-		size_t reads = 0;
-		for (riscv_addr_t addr = read_addr; addr < fin_addr; addr += size) {
-			riscv_batch_add_dmi_read(batch, DMI_DATA0);
+			size_t reads = 0;
+			for (riscv_addr_t addr = read_addr; addr < fin_addr; addr += size) {
+				riscv_batch_add_dmi_read(batch, DMI_DATA0);
 
-			reads++;
-			if (riscv_batch_full(batch))
-				break;
-		}
+				reads++;
+				if (riscv_batch_full(batch))
+					break;
+			}
 
-		batch_run(target, batch);
+			batch_run(target, batch);
 
-		/* Wait for the target to finish performing the last abstract command,
-		 * and update our copy of cmderr. If we see that DMI is busy here,
-		 * dmi_busy_delay will be incremented. */
-		uint32_t abstractcs;
-		if (dmi_read(target, &abstractcs, DMI_ABSTRACTCS) != ERROR_OK)
-			return ERROR_FAIL;
-		while (get_field(abstractcs, DMI_ABSTRACTCS_BUSY))
+			/* Wait for the target to finish performing the last abstract command,
+			 * and update our copy of cmderr. If we see that DMI is busy here,
+			 * dmi_busy_delay will be incremented. */
+			uint32_t abstractcs;
 			if (dmi_read(target, &abstractcs, DMI_ABSTRACTCS) != ERROR_OK)
 				return ERROR_FAIL;
-		info->cmderr = get_field(abstractcs, DMI_ABSTRACTCS_CMDERR);
+			while (get_field(abstractcs, DMI_ABSTRACTCS_BUSY))
+				if (dmi_read(target, &abstractcs, DMI_ABSTRACTCS) != ERROR_OK)
+					return ERROR_FAIL;
+			info->cmderr = get_field(abstractcs, DMI_ABSTRACTCS_CMDERR);
 
-		riscv_addr_t next_read_addr;
-		unsigned ignore_last = 0;
-		switch (info->cmderr) {
-			case CMDERR_NONE:
-				LOG_DEBUG("successful (partial?) memory read");
-				next_read_addr = read_addr + reads * size;
-				break;
-			case CMDERR_BUSY:
-				LOG_DEBUG("memory read resulted in busy response");
+			riscv_addr_t next_read_addr;
+			unsigned ignore_last = 0;
+			switch (info->cmderr) {
+				case CMDERR_NONE:
+					LOG_DEBUG("successful (partial?) memory read");
+					next_read_addr = read_addr + reads * size;
+					break;
+				case CMDERR_BUSY:
+					LOG_DEBUG("memory read resulted in busy response");
 
-				increase_ac_busy_delay(target);
-				riscv013_clear_abstract_error(target);
+					increase_ac_busy_delay(target);
+					riscv013_clear_abstract_error(target);
 
-				dmi_write(target, DMI_ABSTRACTAUTO, 0);
+					dmi_write(target, DMI_ABSTRACTAUTO, 0);
 
-				uint32_t dmi_data0;
-				/* This is definitely a good version of the value that we
-				 * attempted to read when we discovered that the target was
-				 * busy. */
-				if (dmi_read(target, &dmi_data0, DMI_DATA0) != ERROR_OK) {
+					uint32_t dmi_data0;
+					/* This is definitely a good version of the value that we
+					 * attempted to read when we discovered that the target was
+					 * busy. */
+					if (dmi_read(target, &dmi_data0, DMI_DATA0) != ERROR_OK) {
+						riscv_batch_free(batch);
+						goto error;
+					}
+
+					/* See how far we got, clobbering dmi_data0. */
+					result = register_read_direct(target, &next_read_addr,
+							GDB_REGNO_S0);
+					if (result != ERROR_OK) {
+						riscv_batch_free(batch);
+						goto error;
+					}
+					write_to_buf(buffer + next_read_addr - 2 * size - address, dmi_data0, size);
+					log_memory_access(next_read_addr - 2 * size, dmi_data0, size, true);
+
+					/* Restore the command, and execute it.
+					 * Now DMI_DATA0 contains the next value just as it would if no
+					 * error had occurred. */
+					dmi_write_exec(target, DMI_COMMAND, command);
+					next_read_addr += size;
+
+					dmi_write(target, DMI_ABSTRACTAUTO,
+							1 << DMI_ABSTRACTAUTO_AUTOEXECDATA_OFFSET);
+
+					ignore_last = 1;
+
+					break;
+				default:
+					LOG_DEBUG("error when reading memory, abstractcs=0x%08lx", (long)abstractcs);
+					riscv013_clear_abstract_error(target);
 					riscv_batch_free(batch);
+					result = ERROR_FAIL;
 					goto error;
-				}
-
-				/* See how far we got, clobbering dmi_data0. */
-				result = register_read_direct(target, &next_read_addr,
-						GDB_REGNO_S0);
-				if (result != ERROR_OK) {
-					riscv_batch_free(batch);
-					goto error;
-				}
-				write_to_buf(buffer + next_read_addr - 2 * size - address, dmi_data0, size);
-				log_memory_access(next_read_addr - 2 * size, dmi_data0, size, true);
-
-				/* Restore the command, and execute it.
-				 * Now DMI_DATA0 contains the next value just as it would if no
-				 * error had occurred. */
-				dmi_write_exec(target, DMI_COMMAND, command);
-				next_read_addr += size;
-
-				dmi_write(target, DMI_ABSTRACTAUTO,
-						1 << DMI_ABSTRACTAUTO_AUTOEXECDATA_OFFSET);
-
-				ignore_last = 1;
-
-				break;
-			default:
-				LOG_DEBUG("error when reading memory, abstractcs=0x%08lx", (long)abstractcs);
-				riscv013_clear_abstract_error(target);
-				riscv_batch_free(batch);
-				result = ERROR_FAIL;
-				goto error;
-		}
-
-		/* Now read whatever we got out of the batch. */
-		dmi_status_t status = DMI_STATUS_SUCCESS;
-		for (size_t i = 0; i < reads; i++) {
-			riscv_addr_t receive_addr = read_addr + (i-2) * size;
-			assert(receive_addr < address + size * count);
-			if (receive_addr < address)
-				continue;
-			if (receive_addr > next_read_addr - (3 + ignore_last) * size)
-				break;
-
-			uint64_t dmi_out = riscv_batch_get_dmi_read(batch, i);
-			status = get_field(dmi_out, DTM_DMI_OP);
-			if (status != DMI_STATUS_SUCCESS) {
-				/* If we're here because of busy count, dmi_busy_delay will
-				 * already have been increased and busy state will have been
-				 * cleared in dmi_read(). */
-				/* In at least some implementations, we issue a read, and then
-				 * can get busy back when we try to scan out the read result,
-				 * and the actual read value is lost forever. Since this is
-				 * rare in any case, we return error here and rely on our
-				 * caller to reread the entire block. */
-				LOG_WARNING("Batch memory read encountered DMI error %d. "
-						"Falling back on slower reads.", status);
-				riscv_batch_free(batch);
-				result = ERROR_FAIL;
-				goto error;
 			}
-			uint32_t value = get_field(dmi_out, DTM_DMI_DATA);
+
+			/* Now read whatever we got out of the batch. */
+			dmi_status_t status = DMI_STATUS_SUCCESS;
+			for (size_t i = 0; i < reads; i++) {
+				riscv_addr_t receive_addr = read_addr + (i-2) * size;
+				assert(receive_addr < address + size * count);
+				if (receive_addr < address)
+					continue;
+				if (receive_addr > next_read_addr - (3 + ignore_last) * size)
+					break;
+
+				uint64_t dmi_out = riscv_batch_get_dmi_read(batch, i);
+				status = get_field(dmi_out, DTM_DMI_OP);
+				if (status != DMI_STATUS_SUCCESS) {
+					/* If we're here because of busy count, dmi_busy_delay will
+					 * already have been increased and busy state will have been
+					 * cleared in dmi_read(). */
+					/* In at least some implementations, we issue a read, and then
+					 * can get busy back when we try to scan out the read result,
+					 * and the actual read value is lost forever. Since this is
+					 * rare in any case, we return error here and rely on our
+					 * caller to reread the entire block. */
+					LOG_WARNING("Batch memory read encountered DMI error %d. "
+							"Falling back on slower reads.", status);
+					riscv_batch_free(batch);
+					result = ERROR_FAIL;
+					goto error;
+				}
+				uint32_t value = get_field(dmi_out, DTM_DMI_DATA);
+				riscv_addr_t offset = receive_addr - address;
+				write_to_buf(buffer + offset, value, size);
+				log_memory_access(receive_addr, value, size, true);
+
+				receive_addr += size;
+			}
+
+			read_addr = next_read_addr;
+
+			riscv_batch_free(batch);
+		}
+	} else {
+		uint64_t value;
+
+		/* note: 2 * size here is for 2 reads outside of loop */
+		for (riscv_addr_t receive_addr = address; receive_addr < fin_addr - (2 * size);
+				receive_addr += size ) {
+
+			result = register_read_direct(target, &value, GDB_REGNO_S1);
+			if (result != ERROR_OK)
+				goto error;
+
+			log_memory_access(receive_addr, value, size, true);
 			riscv_addr_t offset = receive_addr - address;
 			write_to_buf(buffer + offset, value, size);
-			log_memory_access(receive_addr, value, size, true);
-
-			receive_addr += size;
 		}
 
-		read_addr = next_read_addr;
-
-		riscv_batch_free(batch);
+		result = register_read_direct(target, &value, GDB_REGNO_S1);
+		if (result != ERROR_OK)
+			goto error;
 	}
 
 	dmi_write(target, DMI_ABSTRACTAUTO, 0);
@@ -2728,21 +2794,128 @@ static int write_memory_progbuf(struct target *target, target_addr_t address,
 	riscv_addr_t fin_addr = address + (count * size);
 	bool setup_needed = true;
 	LOG_DEBUG("writing until final address 0x%016" PRIx64, fin_addr);
-	while (cur_addr < fin_addr) {
-		LOG_DEBUG("transferring burst starting at address 0x%016" PRIx64,
-				cur_addr);
+	if( !transport_is_mmap()) {
+		while (cur_addr < fin_addr) {
+			LOG_DEBUG("transferring burst starting at address 0x%016" PRIx64,
+					cur_addr);
 
-		struct riscv_batch *batch = riscv_batch_alloc(
-				target,
-				32,
-				info->dmi_busy_delay + info->ac_busy_delay);
+			struct riscv_batch *batch = riscv_batch_alloc(
+					target,
+					32,
+					info->dmi_busy_delay + info->ac_busy_delay);
 
-		/* To write another word, we put it in S1 and execute the program. */
-		unsigned start = (cur_addr - address) / size;
-		for (unsigned i = start; i < count; ++i) {
-			unsigned offset = size*i;
+			/* To write another word, we put it in S1 and execute the program. */
+			unsigned start = (cur_addr - address) / size;
+			for (unsigned i = start; i < count; ++i) {
+				unsigned offset = size*i;
+				const uint8_t *t_buffer = buffer + offset;
+
+				uint32_t value;
+				switch (size) {
+					case 1:
+						value = t_buffer[0];
+						break;
+					case 2:
+						value = t_buffer[0]
+							| ((uint32_t) t_buffer[1] << 8);
+						break;
+					case 4:
+						value = t_buffer[0]
+							| ((uint32_t) t_buffer[1] << 8)
+							| ((uint32_t) t_buffer[2] << 16)
+							| ((uint32_t) t_buffer[3] << 24);
+						break;
+					default:
+						LOG_ERROR("unsupported access size: %d", size);
+						riscv_batch_free(batch);
+						result = ERROR_FAIL;
+						goto error;
+				}
+
+				log_memory_access(address + offset, value, size, false);
+				cur_addr += size;
+
+				if (setup_needed) {
+					result = register_write_direct(target, GDB_REGNO_S0,
+							address + offset);
+					if (result != ERROR_OK) {
+						riscv_batch_free(batch);
+						goto error;
+					}
+
+					/* Write value. */
+					dmi_write(target, DMI_DATA0, value);
+
+					/* Write and execute command that moves value into S1 and
+					 * executes program buffer. */
+					uint32_t command = access_register_command(target,
+							GDB_REGNO_S1, 32,
+							AC_ACCESS_REGISTER_POSTEXEC |
+							AC_ACCESS_REGISTER_TRANSFER |
+							AC_ACCESS_REGISTER_WRITE);
+					result = execute_abstract_command(target, command);
+					if (result != ERROR_OK) {
+						riscv_batch_free(batch);
+						goto error;
+					}
+
+					/* Turn on autoexec */
+					dmi_write(target, DMI_ABSTRACTAUTO,
+							1 << DMI_ABSTRACTAUTO_AUTOEXECDATA_OFFSET);
+
+					setup_needed = false;
+				} else {
+					riscv_batch_add_dmi_write(batch, DMI_DATA0, value);
+					if (riscv_batch_full(batch))
+						break;
+				}
+			}
+
+			result = batch_run(target, batch);
+			riscv_batch_free(batch);
+			if (result != ERROR_OK)
+				goto error;
+
+			/* Note that if the scan resulted in a Busy DMI response, it
+			 * is this read to abstractcs that will cause the dmi_busy_delay
+			 * to be incremented if necessary. */
+
+			uint32_t abstractcs;
+			bool dmi_busy_encountered;
+			if (dmi_op(target, &abstractcs, &dmi_busy_encountered, DMI_OP_READ,
+						DMI_ABSTRACTCS, 0, false) != ERROR_OK)
+				goto error;
+			while (get_field(abstractcs, DMI_ABSTRACTCS_BUSY))
+				if (dmi_read(target, &abstractcs, DMI_ABSTRACTCS) != ERROR_OK)
+					return ERROR_FAIL;
+			info->cmderr = get_field(abstractcs, DMI_ABSTRACTCS_CMDERR);
+			if (info->cmderr == CMDERR_NONE && !dmi_busy_encountered) {
+				LOG_DEBUG("successful (partial?) memory write");
+			} else if (info->cmderr == CMDERR_BUSY || dmi_busy_encountered) {
+				if (info->cmderr == CMDERR_BUSY)
+					LOG_DEBUG("Memory write resulted in abstract command busy response.");
+				else if (dmi_busy_encountered)
+					LOG_DEBUG("Memory write resulted in DMI busy response.");
+				riscv013_clear_abstract_error(target);
+				increase_ac_busy_delay(target);
+
+				dmi_write(target, DMI_ABSTRACTAUTO, 0);
+				result = register_read_direct(target, &cur_addr, GDB_REGNO_S0);
+				if (result != ERROR_OK)
+					goto error;
+				setup_needed = true;
+			} else {
+				LOG_ERROR("error when writing memory, abstractcs=0x%08lx", (long)abstractcs);
+				riscv013_clear_abstract_error(target);
+				result = ERROR_FAIL;
+				goto error;
+			}
+		}
+	} else {
+		result = register_write_direct(target, GDB_REGNO_S0, address);
+		for ( ; cur_addr < fin_addr; cur_addr += size ) {
+			unsigned offset = cur_addr - address;
 			const uint8_t *t_buffer = buffer + offset;
-
 			uint32_t value;
 			switch (size) {
 				case 1:
@@ -2760,88 +2933,24 @@ static int write_memory_progbuf(struct target *target, target_addr_t address,
 					break;
 				default:
 					LOG_ERROR("unsupported access size: %d", size);
-					riscv_batch_free(batch);
 					result = ERROR_FAIL;
 					goto error;
 			}
 
 			log_memory_access(address + offset, value, size, false);
-			cur_addr += size;
+			dmi_write(target, DMI_DATA0, value);
 
-			if (setup_needed) {
-				result = register_write_direct(target, GDB_REGNO_S0,
-						address + offset);
-				if (result != ERROR_OK) {
-					riscv_batch_free(batch);
-					goto error;
-				}
-
-				/* Write value. */
-				dmi_write(target, DMI_DATA0, value);
-
-				/* Write and execute command that moves value into S1 and
-				 * executes program buffer. */
-				uint32_t command = access_register_command(target,
-						GDB_REGNO_S1, 32,
-						AC_ACCESS_REGISTER_POSTEXEC |
-						AC_ACCESS_REGISTER_TRANSFER |
-						AC_ACCESS_REGISTER_WRITE);
-				result = execute_abstract_command(target, command);
-				if (result != ERROR_OK) {
-					riscv_batch_free(batch);
-					goto error;
-				}
-
-				/* Turn on autoexec */
-				dmi_write(target, DMI_ABSTRACTAUTO,
-						1 << DMI_ABSTRACTAUTO_AUTOEXECDATA_OFFSET);
-
-				setup_needed = false;
-			} else {
-				riscv_batch_add_dmi_write(batch, DMI_DATA0, value);
-				if (riscv_batch_full(batch))
-					break;
-			}
-		}
-
-		result = batch_run(target, batch);
-		riscv_batch_free(batch);
-		if (result != ERROR_OK)
-			goto error;
-
-		/* Note that if the scan resulted in a Busy DMI response, it
-		 * is this read to abstractcs that will cause the dmi_busy_delay
-		 * to be incremented if necessary. */
-
-		uint32_t abstractcs;
-		bool dmi_busy_encountered;
-		if (dmi_op(target, &abstractcs, &dmi_busy_encountered, DMI_OP_READ,
-					DMI_ABSTRACTCS, 0, false) != ERROR_OK)
-			goto error;
-		while (get_field(abstractcs, DMI_ABSTRACTCS_BUSY))
-			if (dmi_read(target, &abstractcs, DMI_ABSTRACTCS) != ERROR_OK)
-				return ERROR_FAIL;
-		info->cmderr = get_field(abstractcs, DMI_ABSTRACTCS_CMDERR);
-		if (info->cmderr == CMDERR_NONE && !dmi_busy_encountered) {
-			LOG_DEBUG("successful (partial?) memory write");
-		} else if (info->cmderr == CMDERR_BUSY || dmi_busy_encountered) {
-			if (info->cmderr == CMDERR_BUSY)
-				LOG_DEBUG("Memory write resulted in abstract command busy response.");
-			else if (dmi_busy_encountered)
-				LOG_DEBUG("Memory write resulted in DMI busy response.");
-			riscv013_clear_abstract_error(target);
-			increase_ac_busy_delay(target);
-
-			dmi_write(target, DMI_ABSTRACTAUTO, 0);
-			result = register_read_direct(target, &cur_addr, GDB_REGNO_S0);
-			if (result != ERROR_OK)
+			/* Write and execute command that moves value into S1 and
+			 * executes program buffer. */
+			uint32_t command = access_register_command(target,
+					GDB_REGNO_S1, 32,
+					AC_ACCESS_REGISTER_POSTEXEC |
+					AC_ACCESS_REGISTER_TRANSFER |
+					AC_ACCESS_REGISTER_WRITE);
+			result = execute_abstract_command(target, command);
+			if (result != ERROR_OK) {
 				goto error;
-			setup_needed = true;
-		} else {
-			LOG_ERROR("error when writing memory, abstractcs=0x%08lx", (long)abstractcs);
-			riscv013_clear_abstract_error(target);
-			result = ERROR_FAIL;
-			goto error;
+			}
 		}
 	}
 

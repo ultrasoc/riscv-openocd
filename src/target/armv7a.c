@@ -91,14 +91,13 @@ done:
 /*  retrieve main id register  */
 static int armv7a_read_midr(struct target *target)
 {
-    /* This never changes so only read it once */
-    /*static int read_midr = 0; 
-    if (read_midr == 1)
-    {
-        return ERROR_OK;
-    }
-    read_midr = 1;*/
-    
+	/* This never changes so only read it once */
+	/*static int read_midr = 0;
+	if (read_midr == 1) {
+		return ERROR_OK;
+	}
+	read_midr = 1;*/
+
 	int retval = ERROR_FAIL;
 	struct armv7a_common *armv7a = target_to_armv7a(target);
 	struct arm_dpm *dpm = armv7a->arm.dpm;
@@ -580,9 +579,6 @@ int armv7a_arch_state(struct target *target)
 
 	if (arm->core_mode == ARM_MODE_ABT)
 		armv7a_show_fault_registers(target);
-	if (target->debug_reason == DBG_REASON_WATCHPOINT)
-		LOG_USER("Watchpoint triggered at PC %#08x",
-			(unsigned) armv7a->dpm.wp_pc);
 
 	return ERROR_OK;
 }

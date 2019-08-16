@@ -40,7 +40,7 @@ static int arm7a_l2x_sanity_check(struct target *target)
 	}
 
 	if (!l2x_cache || !l2x_cache->base) {
-		LOG_DEBUG("l2x is not configured!");
+		LOG_ERROR("l2x is not configured!");
 		return ERROR_FAIL;
 	}
 
@@ -103,7 +103,7 @@ done:
 	return retval;
 }
 
-static int armv7a_l2x_cache_inval_virt(struct target *target, target_addr_t virt,
+int armv7a_l2x_cache_inval_virt(struct target *target, target_addr_t virt,
 					uint32_t size)
 {
 	struct armv7a_common *armv7a = target_to_armv7a(target);

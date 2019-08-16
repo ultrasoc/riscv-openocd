@@ -193,5 +193,5 @@ DRIVERHEADERS = \
 	%D%/versaloon/usbtoxxx/usbtoxxx_internal.h \
 	%D%/versaloon/versaloon.h \
 	%D%/versaloon/versaloon_include.h \
-	%D%/versaloon/versaloon_internal.h
-
+	%D%/versaloon/versaloon_internal.h \
+	%D%/ust_jtagprobe/ust_jtagprobe.h

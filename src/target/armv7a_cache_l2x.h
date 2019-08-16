@@ -153,6 +153,8 @@ extern const struct command_registration arm7a_l2x_cache_command_handler[];
 
 int armv7a_l2x_cache_flush_virt(struct target *target, target_addr_t virt,
 					uint32_t size);
+int armv7a_l2x_cache_inval_virt(struct target *target, target_addr_t virt,
+					uint32_t size);
 int arm7a_l2x_flush_all_data(struct target *target);
 
 #endif /* OPENOCD_TARGET_ARM7A_CACHE_L2X_H */

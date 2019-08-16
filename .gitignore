@@ -10,6 +10,7 @@
 *.lo
 *.la
 *.in
+*build/
 
 # generated source files
 src/jtag/minidriver_imp.h
@@ -96,6 +97,8 @@ TAGS
 
 # CScope database files
 *cscope.out
+*cscope.files
 
 # ctags tag files
 tags
+.pydevproject

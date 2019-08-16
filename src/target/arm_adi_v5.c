@@ -863,9 +863,9 @@ int mem_ap_init(struct adiv5_ap *ap)
 
 		dap->mmap_mode = false;
 	}
-	
+
 	return ERROR_OK;
-}	
+}
 
 /**
  * Put the debug link into SWD mode, if the target supports it.
