@@ -17,6 +17,7 @@ char * ust_mmap_bpam_name;
 char * ust_mmap_filter;
 char * ust_axprot;
 bool sendFilterConfigure = false;
+bool defaultAxPROT = true;
 ust_mmap_t * ust_ctx;
 
 static int ust_mmap_init(void)
@@ -54,7 +55,15 @@ static int ust_mmap_init(void)
 	}
 
 
-	err = ust_mmap_set_axprot_mode(ust_ctx, ust_axprot);
+	if(defaultAxPROT)
+	{
+		err = ust_mmap_set_axprot_mode(ust_ctx, (char *)"0x00");
+	}
+	else
+	{
+		err = ust_mmap_set_axprot_mode(ust_ctx, ust_axprot);
+	}
+		
 	if (err != ERROR_OK) 
 	{
 		LOG_ERROR("Error setting axprot mode bits");
@@ -133,6 +142,7 @@ COMMAND_HANDLER(ust_mmap_handle_axprot_mode)
 	{
 		free(ust_mmap_bpam_name);
 		ust_axprot = strdup(CMD_ARGV[0]);
+		defaultAxPROT = false;
 		return ERROR_OK;
 	}
 	return ERROR_COMMAND_SYNTAX_ERROR;
