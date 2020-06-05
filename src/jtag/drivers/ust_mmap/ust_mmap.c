@@ -120,10 +120,10 @@ int ust_mmap_set_axprot_mode(ust_mmap_t *s, const char *val)
 	}
 	else
 	{
-		uint8_t* low_byte = (uint8_t *)converted_val; // Get the lowest byte with the 
-		bool privilege = (*low_byte & 0x1);
-		bool secure =     (*low_byte & 0x2) >> 1; 
-		bool class =      (*low_byte & 0x4) >> 2;
+		uint8_t low_byte = *((uint8_t *)&converted_val); // Get the lowest byte with the 
+		bool privilege = (low_byte & 0x1);
+		bool secure =    (low_byte & 0x2) >> 1; 
+		bool class =     (low_byte & 0x4) >> 2;
 
 		/** Privilege */
 		size = snprintf(send_data, sizeof(send_data), "privilege=%d", privilege);
