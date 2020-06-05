@@ -15,6 +15,7 @@ char * ust_mmap_host;
 char * ust_mmap_port;
 char * ust_mmap_bpam_name;
 char * ust_mmap_filter;
+char * ust_axprot;
 bool sendFilterConfigure = false;
 ust_mmap_t * ust_ctx;
 
@@ -51,6 +52,17 @@ static int ust_mmap_init(void)
 			return err;
 		}
 	}
+
+
+	err = ust_mmap_set_axprot_mode(ust_ctx, ust_axprot);
+	if (err != ERROR_OK) 
+	{
+		LOG_ERROR("Error setting axprot mode bits");
+		ust_mmap_disconnect(ust_ctx);
+		ust_mmap_destroy(ust_ctx);
+		return err;
+	}
+
 	LOG_INFO("ust_mmap driver initialized");
 
 	if (MMAP_SANITY_TEST) { // TODO: Consider adding this as a command
@@ -115,6 +127,17 @@ COMMAND_HANDLER(ust_mmap_handle_filter_command)
 	return ERROR_COMMAND_SYNTAX_ERROR;
 }
 
+COMMAND_HANDLER(ust_mmap_handle_axprot_mode)
+{
+	if (CMD_ARGC == 1) 
+	{
+		free(ust_mmap_bpam_name);
+		ust_axprot = strdup(CMD_ARGV[0]);
+		return ERROR_OK;
+	}
+	return ERROR_COMMAND_SYNTAX_ERROR;
+}
+
 static const struct command_registration ust_mmap_command_handlers[] = {
 	{
 		.name = "ust_mmap_port",
@@ -143,6 +166,13 @@ static const struct command_registration ust_mmap_command_handlers[] = {
 		.mode = COMMAND_CONFIG,
 		.help = "Configure the bpam to use DMA filter.\n",
 		.usage = "filter_name",
+	},
+	{
+		.name = "ust_mmap_axprot_mode", 
+		.handler = ust_mmap_handle_axprot_mode,
+		.mode = COMMAND_CONFIG, 
+		.help = "Set the AxPORT mode (AxPROT[0]=privelege; AxPROT[1]=secure; AxPROT[2]=class) \n",
+		.usage = "axprot_bits",
 	},
 	COMMAND_REGISTRATION_DONE,
 };

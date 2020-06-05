@@ -92,6 +92,72 @@ int ust_mmap_initialise_filter(ust_mmap_t *s, const char *filter) {
 	return ERROR_OK;
 }
 
+int ust_mmap_set_axprot_mode(ust_mmap_t *s, const char *val) 
+{
+	char function[MAX_FUNCTION_NAME_SIZE];
+	char send_data[MAX_DATA_SIZE];
+	size_t size;
+	int err;
+	char *resp;
+	int resp_len;
+
+	size = snprintf(function, sizeof(function), "set-prop(%s)", s->dma_name);
+	if (size >= (int)sizeof(function)) {
+		LOG_ERROR("Function name larger than buffer");
+		return ERROR_FAIL;
+	}
+
+	// Having base as 0: automatically converts using hex if "0x" is prefixed. Else, base 10 is used
+	long int converted_val = strtol(val, NULL, 0);
+	if( converted_val < 0 )
+	{
+		LOG_ERROR("Negative number given");
+		return ERROR_FAIL;
+	} else if( converted_val >= 8 )	// Make sure only three bit values are defined
+	{
+		LOG_ERROR("AxPROT only has three bits. Value defined is bigger than 7");
+		return ERROR_FAIL;
+	}
+	else
+	{
+		uint8_t* low_byte = (uint8_t *)converted_val; // Get the lowest byte with the 
+		bool privilege = (*low_byte & 0x1);
+		bool secure =     (*low_byte & 0x2) >> 1; 
+		bool class =      (*low_byte & 0x4) >> 2;
+
+		/** Privilege */
+		size = snprintf(send_data, sizeof(send_data), "privilege=%d", privilege);
+		ust_tcf_run_cmd(s->tcf, "ddma", function, send_data, size + 1);
+		err = ust_tcf_wait_for_response(s->tcf, &resp, &resp_len);
+		if (err != ERROR_OK) {
+			LOG_ERROR("tcf response gives error");
+			return err;
+		}
+
+		/** Secure-bit */
+		memset(&send_data, 0, MAX_DATA_SIZE); // Clear the array 
+		size = snprintf(send_data, sizeof(send_data), "secure=%d", secure);
+		err = ust_tcf_run_cmd(s->tcf, "ddma", function, send_data, size + 1);
+		if (err != ERROR_OK) {
+			LOG_ERROR("tcf response gives error");
+			return err;
+		}
+
+		/** Class */
+		memset(&send_data, 0, MAX_DATA_SIZE); // Clear the array 
+		size = snprintf(send_data, sizeof(send_data), "class=%d", class);
+		err = ust_tcf_run_cmd(s->tcf, "ddma", function, send_data, size + 1);
+		if (err != ERROR_OK) {
+			LOG_ERROR("tcf response gives error");
+			return err;
+		}
+
+	}
+
+	return ERROR_OK;
+
+}
+
 int ust_mmap_disconnect(ust_mmap_t *s)
 {
 	return ust_tcf_disconnect(s->tcf);
