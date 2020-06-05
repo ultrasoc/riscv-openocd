@@ -137,7 +137,8 @@ int ust_mmap_set_axprot_mode(ust_mmap_t *s, const char *val)
 		/** Secure-bit */
 		memset(&send_data, 0, MAX_DATA_SIZE); // Clear the array 
 		size = snprintf(send_data, sizeof(send_data), "secure=%d", secure);
-		err = ust_tcf_run_cmd(s->tcf, "ddma", function, send_data, size + 1);
+		ust_tcf_run_cmd(s->tcf, "ddma", function, send_data, size + 1);
+		err = ust_tcf_wait_for_response(s->tcf, &resp, &resp_len);
 		if (err != ERROR_OK) {
 			LOG_ERROR("tcf response gives error");
 			return err;
@@ -146,7 +147,8 @@ int ust_mmap_set_axprot_mode(ust_mmap_t *s, const char *val)
 		/** Class */
 		memset(&send_data, 0, MAX_DATA_SIZE); // Clear the array 
 		size = snprintf(send_data, sizeof(send_data), "class=%d", class);
-		err = ust_tcf_run_cmd(s->tcf, "ddma", function, send_data, size + 1);
+		ust_tcf_run_cmd(s->tcf, "ddma", function, send_data, size + 1);
+		err = ust_tcf_wait_for_response(s->tcf, &resp, &resp_len);
 		if (err != ERROR_OK) {
 			LOG_ERROR("tcf response gives error");
 			return err;
