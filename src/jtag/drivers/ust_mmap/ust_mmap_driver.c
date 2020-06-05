@@ -135,7 +135,7 @@ COMMAND_HANDLER(ust_mmap_handle_axprot_mode)
 {
 	if (CMD_ARGC == 1) 
 	{
-		free(ust_mmap_bpam_name);
+		free(ust_axprot);
 		ust_axprot = strdup(CMD_ARGV[0]);
 		setAxPROT = true;
 		return ERROR_OK;
