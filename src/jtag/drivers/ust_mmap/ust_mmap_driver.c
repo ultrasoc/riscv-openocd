@@ -15,48 +15,64 @@ char * ust_mmap_host;
 char * ust_mmap_port;
 char * ust_mmap_bpam_name;
 char * ust_mmap_filter;
+char * ust_axprot;
 bool sendFilterConfigure = false;
-ust_mmap_t * ust_ctx;
+bool setAxPROT = false;
+ust_mmap_t * ust_ctx_object;
 
 static int ust_mmap_init(void)
 {
 	int err;
 	LOG_INFO("ust_mmap intializing driver");
 
-	ust_ctx = ust_mmap_create(ust_mmap_bpam_name);
-	if (!ust_ctx) {
+	ust_ctx_object = ust_mmap_create(ust_mmap_bpam_name);
+	if (!ust_ctx_object) {
 		LOG_ERROR("Error in ust_mmap_create");
 		return ERROR_FAIL;
 	}
-	err = ust_mmap_connect(ust_ctx, ust_mmap_host, ust_mmap_port);
+	err = ust_mmap_connect(ust_ctx_object, ust_mmap_host, ust_mmap_port);
 	if (err != ERROR_OK) {
 		LOG_ERROR("Error connecting socket for ust_mmap driver");
-		ust_mmap_destroy(ust_ctx);
+		ust_mmap_destroy(ust_ctx_object);
 		return err;
 	}
-	err = ust_mmap_check_memory_service(ust_ctx);
+	err = ust_mmap_check_memory_service(ust_ctx_object);
 	if (err != ERROR_OK) {
 		LOG_ERROR("Error checking the memory service");
-		ust_mmap_disconnect(ust_ctx);
-		ust_mmap_destroy(ust_ctx);
+		ust_mmap_disconnect(ust_ctx_object);
+		ust_mmap_destroy(ust_ctx_object);
 		return err;
 	}
 
 	if (sendFilterConfigure) {
-		err = ust_mmap_initialise_filter(ust_ctx, ust_mmap_filter);
+		err = ust_mmap_initialise_filter(ust_ctx_object, ust_mmap_filter);
 		if (err != ERROR_OK) {
 			LOG_ERROR("Error initialising filter");
-			ust_mmap_disconnect(ust_ctx);
-			ust_mmap_destroy(ust_ctx);
+			ust_mmap_disconnect(ust_ctx_object);
+			ust_mmap_destroy(ust_ctx_object);
 			return err;
 		}
 	}
+
+
+	if(setAxPROT)
+	{
+		err = ust_mmap_set_axprot_mode(ust_ctx_object, ust_axprot);	
+		if (err != ERROR_OK) 
+		{
+			LOG_ERROR("Error setting axprot mode bits");
+			ust_mmap_disconnect(ust_ctx_object);
+			ust_mmap_destroy(ust_ctx_object);
+			return err;
+		}
+	}
+
 	LOG_INFO("ust_mmap driver initialized");
 
 	if (MMAP_SANITY_TEST) { // TODO: Consider adding this as a command
-		err = ust_mmap_test(ust_ctx);
+		err = ust_mmap_test(ust_ctx_object);
 		if (err != ERROR_OK) {
-			ust_mmap_destroy(ust_ctx);
+			ust_mmap_destroy(ust_ctx_object);
 		return err;
 		}
 	}
@@ -68,8 +84,8 @@ static int ust_mmap_quit(void)
 {
 	LOG_INFO("ust_mmap quit");
 
-	ust_mmap_disconnect(ust_ctx);
-	ust_mmap_destroy(ust_ctx);
+	ust_mmap_disconnect(ust_ctx_object);
+	ust_mmap_destroy(ust_ctx_object);
 
 	return ERROR_OK;
 }
@@ -115,6 +131,18 @@ COMMAND_HANDLER(ust_mmap_handle_filter_command)
 	return ERROR_COMMAND_SYNTAX_ERROR;
 }
 
+COMMAND_HANDLER(ust_mmap_handle_axprot_mode)
+{
+	if (CMD_ARGC == 1) 
+	{
+		free(ust_axprot);
+		ust_axprot = strdup(CMD_ARGV[0]);
+		setAxPROT = true;
+		return ERROR_OK;
+	}
+	return ERROR_COMMAND_SYNTAX_ERROR;
+}
+
 static const struct command_registration ust_mmap_command_handlers[] = {
 	{
 		.name = "ust_mmap_port",
@@ -144,6 +172,13 @@ static const struct command_registration ust_mmap_command_handlers[] = {
 		.help = "Configure the bpam to use DMA filter.\n",
 		.usage = "filter_name",
 	},
+	{
+		.name = "ust_mmap_axprot_mode", 
+		.handler = ust_mmap_handle_axprot_mode,
+		.mode = COMMAND_CONFIG, 
+		.help = "Set the AxPORT mode (AxPROT[0]=privelege; AxPROT[1]=secure; AxPROT[2]=class) \n",
+		.usage = "axprot_bits",
+	},
 	COMMAND_REGISTRATION_DONE,
 };
 
@@ -155,12 +190,12 @@ static int ust_mmap_execute_queue(void)
 
 int ust_mmap_do_read(uint64_t addr, int byte_len, uint64_t *value)
 {
-	return ust_mmap_read(ust_ctx, addr, byte_len, value);
+	return ust_mmap_read(ust_ctx_object, addr, byte_len, value);
 }
 
 int ust_mmap_do_write(uint64_t addr, int byte_len, uint64_t value)
 {
-	return ust_mmap_write(ust_ctx, addr, byte_len, value);
+	return ust_mmap_write(ust_ctx_object, addr, byte_len, value);
 }
 
 const struct mmap_interface ust_mmap = {
