@@ -154,6 +154,8 @@ enum jtag_command_type {
 	JTAG_TMS          = 9,
 };
 
+
+//luke to do add pam name in here or mat suggests whole tap structure
 struct jtag_command {
 	union jtag_command_container cmd;
 	enum jtag_command_type type;
