@@ -467,26 +467,14 @@ static int get_pam_id(Jim_Nvp *n, Jim_GetOptInfo *goi,
                       struct jtag_tap *pTap)
 {
 
-    jim_wide w;
-    int e = Jim_GetOpt_Wide(goi, &w);
+    const char *tmp;
+    int e = Jim_GetOpt_String(goi, &tmp, NULL);
     if (e != JIM_OK) {
         Jim_SetResultFormatted(goi->interp, "option: %s bad parameter", n->name);
         return e;
     }
 
-    char *p = realloc(pTap->pam,
-                  sizeof(goi->argv));
-
-    if (!p) {
-        Jim_SetResultFormatted(goi->interp, "no memory");
-        return JIM_ERR;
-    }
-
-    pTap->pam = p;
-
-    //todo testing remove
-    printf("\n\n %s \n\n", p);
-
+    pTap->pam = strdup(tmp);
 
     return JIM_OK;
 }
@@ -923,7 +911,7 @@ static const struct command_registration jtag_subcommand_handlers[] = {
 			"['-expected_id' number] "
 			"['-ignore-version'] "
 			"['-ircapture' number] "
-			"['-mask' number] ",
+            "['-mask' number] "
             "['-pam' string] ",
 	},
 	{
