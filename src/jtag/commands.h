@@ -161,7 +161,7 @@ struct jtag_command {
 	union jtag_command_container cmd;
 	enum jtag_command_type type;
 	struct jtag_command *next;
-    struct jtag_tap *tap;
+	struct jtag_tap *tap;
 };
 
 /** The current queue of jtag_command_s structures. */

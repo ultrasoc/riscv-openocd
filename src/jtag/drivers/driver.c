@@ -73,7 +73,7 @@ int interface_jtag_add_ir_scan(struct jtag_tap *active,
 
 	cmd->type = JTAG_SCAN;
 	cmd->cmd.scan = scan;    
-    cmd->tap = active;
+	cmd->tap = active;
 
 	scan->ir_scan = true;
 	scan->num_fields = num_taps;	/* one field per device */
@@ -87,11 +87,11 @@ int interface_jtag_add_ir_scan(struct jtag_tap *active,
 	for (struct jtag_tap *tap = jtag_tap_next_enabled(NULL); tap != NULL; tap = jtag_tap_next_enabled(tap)) {
 		/* search the input field list for fields for the current TAP */
 
-        if(strcmp (cmd->tap->pam, tap->pam) != 0){
-            printf("\n\n testir \n\n %s \n\n %s \n\n",cmd->tap->pam, tap->pam);
+	if(strcmp (cmd->tap->pam, tap->pam) != 0){
+		printf("\n\n testir \n\n %s \n\n %s \n\n",cmd->tap->pam, tap->pam);
 
-            continue;
-        }
+		continue;
+	}
 
 
         if (tap == active) {
@@ -151,7 +151,7 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
 
 	cmd->type = JTAG_SCAN;
 	cmd->cmd.scan = scan;
-    cmd->tap = active;
+	cmd->tap = active;
 
 	scan->ir_scan = false;
 	scan->num_fields = in_num_fields + bypass_devices;
@@ -176,9 +176,9 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
 #endif /* NDEBUG */
 
 
-            if(strcmp (cmd->tap->pam, tap->pam) != 0){
-                continue;
-            }
+			if(strcmp (cmd->tap->pam, tap->pam) != 0){
+				continue;
+			}
 
 			for (int j = 0; j < in_num_fields; j++) {
 				jtag_scan_field_clone(field, in_fields + j);
