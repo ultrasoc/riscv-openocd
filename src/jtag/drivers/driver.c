@@ -35,6 +35,7 @@
 #include <jtag/commands.h>
 #include <jtag/minidriver.h>
 #include <helper/command.h>
+#include <string.h>
 
 struct jtag_callback_entry {
 	struct jtag_callback_entry *next;
@@ -71,7 +72,8 @@ int interface_jtag_add_ir_scan(struct jtag_tap *active,
 	jtag_queue_command(cmd);
 
 	cmd->type = JTAG_SCAN;
-	cmd->cmd.scan = scan;
+	cmd->cmd.scan = scan;    
+    cmd->tap = active;
 
 	scan->ir_scan = true;
 	scan->num_fields = num_taps;	/* one field per device */
@@ -85,28 +87,42 @@ int interface_jtag_add_ir_scan(struct jtag_tap *active,
 	for (struct jtag_tap *tap = jtag_tap_next_enabled(NULL); tap != NULL; tap = jtag_tap_next_enabled(tap)) {
 		/* search the input field list for fields for the current TAP */
 
-		if (tap == active) {
-			/* if TAP is listed in input fields, copy the value */
-			tap->bypass = 0;
+        if(strcmp (cmd->tap->pam, tap->pam) != 0){
+            printf("\n\n testir \n\n %s \n\n %s \n\n",cmd->tap->pam, tap->pam);
 
-			jtag_scan_field_clone(field, in_fields);
-		} else {
-			/* if a TAP isn't listed in input fields, set it to BYPASS */
+            continue;
+        }
 
-			tap->bypass = 1;
 
-			field->num_bits = tap->ir_length;
-			field->out_value = buf_set_ones(cmd_queue_alloc(DIV_ROUND_UP(tap->ir_length, 8)), tap->ir_length);
-			field->in_value = NULL; /* do not collect input for tap's in bypass */
-		}
+        if (tap == active) {
+            /* if TAP is listed in input fields, copy the value */
+            tap->bypass = 0;
 
-		/* update device information */
-		buf_cpy(field->out_value, tap->cur_instr, tap->ir_length);
+            jtag_scan_field_clone(field, in_fields);
+        } else {
+            /* if a TAP isn't listed in input fields, set it to BYPASS */
 
-		field++;
+//            printf("\n\n %s \n\n %s \n\n",cmd->tap->pam, tap->pam);
+
+//            if(strcmp (cmd->tap->pam, tap->pam) != 0){
+
+                    tap->bypass = 1;
+
+                    field->num_bits = tap->ir_length;
+                    field->out_value = buf_set_ones(cmd_queue_alloc(DIV_ROUND_UP(tap->ir_length, 8)), tap->ir_length);
+                    field->in_value = NULL; /* do not collect input for tap's in bypass */
+//                }
+            }
+
+
+        /* update device information */
+        buf_cpy(field->out_value, tap->cur_instr, tap->ir_length);
+
+        field++;
+
 	}
 	/* paranoia: jtag_tap_count_enabled() and jtag_tap_next_enabled() not in sync */
-	assert(field == out_fields + num_taps);
+    //assert(field == out_fields + num_taps);
 
 	return ERROR_OK;
 }
@@ -135,6 +151,7 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
 
 	cmd->type = JTAG_SCAN;
 	cmd->cmd.scan = scan;
+    cmd->tap = active;
 
 	scan->ir_scan = false;
 	scan->num_fields = in_num_fields + bypass_devices;
@@ -148,12 +165,20 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
 	for (struct jtag_tap *tap = jtag_tap_next_enabled(NULL); tap != NULL; tap = jtag_tap_next_enabled(tap)) {
 		/* if TAP is not bypassed insert matching input fields */
 
+//        printf("\n\n testDR \n\n %s \n\n %s \n\n",cmd->tap->pam, tap->pam);
+
+
 		if (!tap->bypass) {
 			assert(active == tap);
 #ifndef NDEBUG
 			/* remember initial position for assert() */
 			struct scan_field *start_field = field;
 #endif /* NDEBUG */
+
+
+            if(strcmp (cmd->tap->pam, tap->pam) != 0){
+                continue;
+            }
 
 			for (int j = 0; j < in_num_fields; j++) {
 				jtag_scan_field_clone(field, in_fields + j);
@@ -165,17 +190,21 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
 		}
 
 		/* if a TAP is bypassed, generated a dummy bit*/
-        //TODO - luke - if else only add bit if only on same jpam
 		else {
-			field->num_bits = 1;
-			field->out_value = NULL;
-			field->in_value = NULL;
+//            printf("\n\n %s \n\n %s \n\n",cmd->tap->pam, tap->pam);
 
-			field++;
-		}
+ //           if(strcmp (cmd->tap->pam, tap->pam) != 0){
+
+                    field->num_bits = 1;
+                    field->out_value = NULL;
+                    field->in_value = NULL;
+//            }
+        }
+
+            field++;
 	}
 
-	assert(field == out_fields + scan->num_fields); /* no superfluous input fields permitted */
+   // assert(field == out_fields + scan->num_fields); /* no superfluous input fields permitted */
 
 	return ERROR_OK;
 }
