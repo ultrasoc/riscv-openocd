@@ -551,7 +551,7 @@ static int jim_newtap_cmd(Jim_GetOptInfo *goi)
 		{ .name = "-disable",       .value = NTAP_OPT_DISABLED },
 		{ .name = "-expected-id",       .value = NTAP_OPT_EXPECTED_ID },
 		{ .name = "-ignore-version",       .value = NTAP_OPT_VERSION },
-        { .name = "-pam",       .value = NTAP_OPT_PAM },
+		{ .name = "-pam",       .value = NTAP_OPT_PAM },
 		{ .name = NULL,       .value = -1 },
 	};
 
@@ -911,8 +911,8 @@ static const struct command_registration jtag_subcommand_handlers[] = {
 			"['-expected_id' number] "
 			"['-ignore-version'] "
 			"['-ircapture' number] "
-            "['-mask' number] "
-            "['-pam' string] ",
+			"['-mask' number] "
+			"['-pam' string] ",
 	},
 	{
 		.name = "tapisenabled",
