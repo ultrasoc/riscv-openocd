@@ -89,8 +89,6 @@ int interface_jtag_add_ir_scan(struct jtag_tap *active,
 
 	if(tap->pam){
 		if(strcmp (cmd->tap->pam, tap->pam) != 0){
-			printf("\n\n testir \n\n %s \n\n %s \n\n",cmd->tap->pam, tap->pam);
-
 			continue;
 		}
 	}
@@ -103,16 +101,11 @@ int interface_jtag_add_ir_scan(struct jtag_tap *active,
         } else {
             /* if a TAP isn't listed in input fields, set it to BYPASS */
 
-//            printf("\n\n %s \n\n %s \n\n",cmd->tap->pam, tap->pam);
-
-//            if(strcmp (cmd->tap->pam, tap->pam) != 0){
-
                     tap->bypass = 1;
 
                     field->num_bits = tap->ir_length;
                     field->out_value = buf_set_ones(cmd_queue_alloc(DIV_ROUND_UP(tap->ir_length, 8)), tap->ir_length);
                     field->in_value = NULL; /* do not collect input for tap's in bypass */
-//                }
             }
 
 
@@ -166,9 +159,6 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
 	for (struct jtag_tap *tap = jtag_tap_next_enabled(NULL); tap != NULL; tap = jtag_tap_next_enabled(tap)) {
 		/* if TAP is not bypassed insert matching input fields */
 
-//        printf("\n\n testDR \n\n %s \n\n %s \n\n",cmd->tap->pam, tap->pam);
-
-
 		if (!tap->bypass) {
 			assert(active == tap);
 #ifndef NDEBUG
@@ -193,14 +183,10 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
 
 		/* if a TAP is bypassed, generated a dummy bit*/
 		else {
-//            printf("\n\n %s \n\n %s \n\n",cmd->tap->pam, tap->pam);
-
- //           if(strcmp (cmd->tap->pam, tap->pam) != 0){
 
                     field->num_bits = 1;
                     field->out_value = NULL;
                     field->in_value = NULL;
-//            }
         }
 
 	    field++;
