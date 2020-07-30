@@ -184,12 +184,14 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
 		/* if a TAP is bypassed, generated a dummy bit*/
 		else {
 
-                    field->num_bits = 1;
-                    field->out_value = NULL;
-                    field->in_value = NULL;
-        }
+			field->num_bits = 1;
+			field->out_value = NULL;
+			field->in_value = NULL;
 
-	    field++;
+			field++;
+
+		}
+
 	}
 
    // assert(field == out_fields + scan->num_fields); /* no superfluous input fields permitted */
