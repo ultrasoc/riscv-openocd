@@ -156,8 +156,8 @@ struct jtag_tap {
 	/* private pointer to support none-jtag specific functions */
 	void *priv;
 
-    // Added to store jpam module name
-    char *pam;
+        // Added to store jpam module index
+        uint16_t *pam;
 
 };
 

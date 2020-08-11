@@ -60,7 +60,7 @@ static int ust_jtagprobe_quit(void)
 }
 
 static int ust_scan(bool ir_scan, enum scan_type type,
-					uint8_t *buffer, int scan_size)
+					uint8_t *buffer, int scan_size, struct jtag_tap *tap)
 {
 	int err;
 	// We assume this is the only tap or that chain position is dealt
@@ -69,11 +69,11 @@ static int ust_scan(bool ir_scan, enum scan_type type,
 		// Just push zeros through
 		uint8_t *zeros = calloc(scan_size, sizeof(uint8_t));
 		LOG_WARNING("Pushing zeros through the scan chain to get a scan from the device.");
-		err = ust_jtagprobe_send_scan(ust_ctx, !ir_scan, 0, scan_size, zeros);
+		err = ust_jtagprobe_send_scan(ust_ctx, !ir_scan, 0, scan_size, zeros, tap);
 		free(zeros);
 	} else {
 		err = ust_jtagprobe_send_scan(ust_ctx, !ir_scan, type == SCAN_OUT,
-									  scan_size, buffer);
+									  scan_size, buffer, tap);
 	}
 
 	if (err != ERROR_OK) {
@@ -82,7 +82,7 @@ static int ust_scan(bool ir_scan, enum scan_type type,
 	}
 
 	if (type != SCAN_OUT) {
-		err = ust_jtagprobe_recv_scan(ust_ctx, scan_size, buffer);
+		err = ust_jtagprobe_recv_scan(ust_ctx, scan_size, buffer, tap);
 		if (err != ERROR_OK) {
 			LOG_ERROR("ust_jtagprobe recv scan failed");
 			return ERROR_FAIL;
@@ -131,7 +131,7 @@ static const struct command_registration ust_jtagprobe_command_handlers[] = {
 
 int ust_jtagprobe_execute_queue(void)
 {
-	struct jtag_command *cmd = jtag_command_queue;
+	struct jtag_command *cmd = jtag_command_queue;  //this has the tap in - luke
 	int scan_size;
 	enum scan_type type;
 	uint8_t *buffer;
@@ -192,7 +192,7 @@ int ust_jtagprobe_execute_queue(void)
 			scan_size = jtag_build_buffer(cmd->cmd.scan, &buffer);
 			type = jtag_scan_type(cmd->cmd.scan);
 			if (ust_scan(cmd->cmd.scan->ir_scan,
-						 type, buffer, scan_size) != ERROR_OK) {
+						 type, buffer, scan_size, cmd->tap) != ERROR_OK) {
 				retval = ERROR_JTAG_QUEUE_FAILED;
 			}
 			if (jtag_read_buffer(buffer, cmd->cmd.scan) != ERROR_OK)

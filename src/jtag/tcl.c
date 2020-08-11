@@ -467,14 +467,14 @@ static int get_pam_id(Jim_Nvp *n, Jim_GetOptInfo *goi,
                       struct jtag_tap *pTap)
 {
 
-	const char *tmp;
-	int e = Jim_GetOpt_String(goi, &tmp, NULL);
+	jim_wide tmp;
+	int e = Jim_GetOpt_Wide(goi, &tmp);
 	if (e != JIM_OK) {
 		Jim_SetResultFormatted(goi->interp, "option: %s bad parameter", n->name);
 		return e;
 	}
 
-	pTap->pam = strdup(tmp);
+	pTap->pam = tmp;
 
 	return JIM_OK;
 }

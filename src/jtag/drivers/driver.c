@@ -88,7 +88,7 @@ int interface_jtag_add_ir_scan(struct jtag_tap *active,
 		/* search the input field list for fields for the current TAP */
 
 	if(tap->pam){
-		if(strcmp (cmd->tap->pam, tap->pam) != 0){
+		if(cmd->tap->pam != tap->pam){
 			continue;
 		}
 	}
@@ -167,7 +167,7 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
 #endif /* NDEBUG */
 
 			if(tap->pam){
-				if(strcmp (cmd->tap->pam, tap->pam) != 0){
+				if(cmd->tap->pam != tap->pam){
 					continue;
 				}
 			}

@@ -84,7 +84,7 @@ int ust_jtagprobe_disconnect(ust_jtagprobe_t *s) {
 unsigned long jtag_data_in[1024];
 unsigned long jtag_data_out[1024];
 
-int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, int bit_length, uint8_t *bits) {
+int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, int bit_length, uint8_t *bits, struct jtag_tap *tap) {
 	uint8_t buffer[4096];
 	int bytes_sent;
 	int err;
@@ -93,19 +93,30 @@ int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, in
 	int msglen = 4 + bytelen;
 	int len = 0;
 
+	//build up scan to send to agent
 	buffer[len++] = 0;
 	buffer[len++] = 0;
 	buffer[len++] = (msglen >> 8) & 0xFF;
 	buffer[len++] = msglen & 0xFF;
 	buffer[len++] = is_data ? JTAGPROBE_SHIFT_DR : JTAGPROBE_SHIFT_IR;
 	buffer[len++] = no_response ? JTAGPROBE_FLAG_NO_RESPONSE : 0;
+
+	//If the pam index has been set pass it to agent
+	if(tap->pam)
+	{
+//		buffer[len++] = ((int)tap->pam >> 8) & 0xFF;
+//		buffer[len++] = (int)tap->pam & 0xFF;
+	}
+
 	buffer[len++] = (bit_length >> 8) & 0xFF;
 	buffer[len++] = bit_length & 0xFF;
+
+
 	memcpy(buffer + len, bits, bytelen);
 	len += bytelen;
 
 	bytes_sent = send(s->skt, buffer, len, 0);
-	EnableQuickAck(s->skt);
+	EnableQuickAck(s->skt); // this is where its sent to agent
 	
 	if (bytes_sent != len) {
 		LOG_ERROR("sent %d bytes expected to send %d\n", bytes_sent, len);
@@ -149,7 +160,7 @@ int	 ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, u
 	}
 }
 
-int ust_jtagprobe_recv_scan(ust_jtagprobe_t *s, int bit_length, uint8_t *bits) {
+int ust_jtagprobe_recv_scan(ust_jtagprobe_t *s, int bit_length, uint8_t *bits, struct jtag_tap *tap) {
 	uint8_t buffer[4096];
 	int bytelen = (bit_length + 7) / 8;
 	int msglen = 4 + bytelen;
