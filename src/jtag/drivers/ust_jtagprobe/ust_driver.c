@@ -45,6 +45,13 @@ static int ust_jtagprobe_init(void)
 		return ERROR_FAIL;
 	}
 
+	struct jtag_command *cmd = jtag_command_queue;
+	if(cmd->tap->pam)
+	{
+		uint32_t args[1]  = {2};
+		ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_NETWORK_VERSION, 1, args);
+	}
+
 	LOG_INFO("ust_jtagprobe driver initialized");
 	return ERROR_OK;
 }
