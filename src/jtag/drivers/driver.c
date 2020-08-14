@@ -210,6 +210,7 @@ static int jtag_add_plain_scan(int num_bits, const uint8_t *out_bits,
 
 	cmd->type = JTAG_SCAN;
 	cmd->cmd.scan = scan;
+	cmd->tap = NULL;
 
 	scan->ir_scan = ir_scan;
 	scan->num_fields = 1;
@@ -243,6 +244,7 @@ int interface_jtag_add_tlr(void)
 	jtag_queue_command(cmd);
 
 	cmd->type = JTAG_TLR_RESET;
+	cmd->tap = NULL;
 
 	cmd->cmd.statemove = cmd_queue_alloc(sizeof(struct statemove_command));
 	cmd->cmd.statemove->end_state = state;
@@ -283,6 +285,7 @@ int interface_jtag_add_pathmove(int num_states, const tap_state_t *path)
 	jtag_queue_command(cmd);
 
 	cmd->type = JTAG_PATHMOVE;
+	cmd->tap = NULL;
 
 	cmd->cmd.pathmove = cmd_queue_alloc(sizeof(struct pathmove_command));
 	cmd->cmd.pathmove->num_states = num_states;
@@ -302,6 +305,7 @@ int interface_jtag_add_runtest(int num_cycles, tap_state_t state)
 	jtag_queue_command(cmd);
 
 	cmd->type = JTAG_RUNTEST;
+	cmd->tap = NULL;
 
 	cmd->cmd.runtest = cmd_queue_alloc(sizeof(struct runtest_command));
 	cmd->cmd.runtest->num_cycles = num_cycles;
@@ -318,6 +322,7 @@ int interface_jtag_add_clocks(int num_cycles)
 	jtag_queue_command(cmd);
 
 	cmd->type = JTAG_STABLECLOCKS;
+	cmd->tap = NULL;
 
 	cmd->cmd.stableclocks = cmd_queue_alloc(sizeof(struct stableclocks_command));
 	cmd->cmd.stableclocks->num_cycles = num_cycles;
@@ -333,6 +338,7 @@ int interface_jtag_add_reset(int req_trst, int req_srst)
 	jtag_queue_command(cmd);
 
 	cmd->type = JTAG_RESET;
+	cmd->tap = NULL;
 
 	cmd->cmd.reset = cmd_queue_alloc(sizeof(struct reset_command));
 	cmd->cmd.reset->trst = req_trst;
@@ -349,6 +355,7 @@ int interface_jtag_add_sleep(uint32_t us)
 	jtag_queue_command(cmd);
 
 	cmd->type = JTAG_SLEEP;
+	cmd->tap = NULL;
 
 	cmd->cmd.sleep = cmd_queue_alloc(sizeof(struct sleep_command));
 	cmd->cmd.sleep->us = us;

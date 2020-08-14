@@ -158,6 +158,7 @@ struct jtag_tap {
 
         // Added to store jpam module index
         uint16_t *pam;
+        bool version_sent;
 
 };
 

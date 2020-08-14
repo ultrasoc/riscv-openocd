@@ -475,6 +475,7 @@ static int get_pam_id(Jim_Nvp *n, Jim_GetOptInfo *goi,
 	}
 
 	pTap->pam = tmp;
+	pTap->version_sent = false;
 
 	return JIM_OK;
 }
@@ -600,6 +601,8 @@ static int jim_newtap_cmd(Jim_GetOptInfo *goi)
 	pTap->ir_capture_mask = 0x03;
 	pTap->ir_capture_value = 0x01;
 
+	pTap->version_sent = true; //Dont need to update version for v1.
+
 	while (goi->argc) {
 		e = Jim_GetOpt_Nvp(goi, opts, &n);
 		if (e != JIM_OK) {
@@ -637,14 +640,14 @@ static int jim_newtap_cmd(Jim_GetOptInfo *goi)
 		    case NTAP_OPT_VERSION:
 			    pTap->ignore_version = true;
 			    break;
-            case NTAP_OPT_PAM:
-                e = get_pam_id(n, goi, pTap);
-                if (JIM_OK != e) {
-                    free(cp);
-                    free(pTap);
-                    return e;
-                }
-                break;
+		    case NTAP_OPT_PAM:
+			    e = get_pam_id(n, goi, pTap);
+			    if (JIM_OK != e) {
+				    free(cp);
+				    free(pTap);
+				    return e;
+			    }
+			    break;
 		}	/* switch (n->value) */
 	}	/* while (goi->argc) */
 
@@ -912,7 +915,7 @@ static const struct command_registration jtag_subcommand_handlers[] = {
 			"['-ignore-version'] "
 			"['-ircapture' number] "
 			"['-mask' number] "
-			"['-pam' string] ",
+			"['-pam' number] ",
 	},
 	{
 		.name = "tapisenabled",
