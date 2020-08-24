@@ -102,10 +102,13 @@ int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, in
 	buffer[len++] = no_response ? JTAGPROBE_FLAG_NO_RESPONSE : 0;
 
 	//If the pam index has been set pass it to agent
-	if(tap->pam)
+	if(tap)
 	{
-//		buffer[len++] = ((int)tap->pam >> 8) & 0xFF;
-//		buffer[len++] = (int)tap->pam & 0xFF;
+		if(tap->pam)
+		{
+			buffer[len++] = ((int)tap->pam >> 8) & 0xFF;
+			buffer[len++] = (int)tap->pam & 0xFF;
+		}
 	}
 
 	buffer[len++] = (bit_length >> 8) & 0xFF;

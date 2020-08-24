@@ -37,6 +37,10 @@
 #define DEBUG_JTAG_IOZ 64
 #endif
 
+//Global variables
+
+extern bool ust_version_info_sent;
+
 /*-----</Macros>-------------------------------------------------*/
 
 /**
@@ -158,8 +162,6 @@ struct jtag_tap {
 
         // Added to store jpam module index
         uint16_t *pam;
-        bool version_sent;
-
 };
 
 void jtag_tap_init(struct jtag_tap *tap);

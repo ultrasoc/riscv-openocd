@@ -49,6 +49,8 @@
  * Holds support for accessing JTAG-specific mechanisms from TCl scripts.
  */
 
+bool ust_version_info_sent = true;
+
 static const Jim_Nvp nvp_jtag_tap_event[] = {
 	{ .value = JTAG_TRST_ASSERTED,          .name = "post-reset" },
 	{ .value = JTAG_TAP_EVENT_SETUP,        .name = "setup" },
@@ -475,7 +477,7 @@ static int get_pam_id(Jim_Nvp *n, Jim_GetOptInfo *goi,
 	}
 
 	pTap->pam = tmp;
-	pTap->version_sent = false;
+	ust_version_info_sent = false;
 
 	return JIM_OK;
 }
@@ -600,8 +602,6 @@ static int jim_newtap_cmd(Jim_GetOptInfo *goi)
 	 */
 	pTap->ir_capture_mask = 0x03;
 	pTap->ir_capture_value = 0x01;
-
-	pTap->version_sent = true; //Dont need to update version for v1.
 
 	while (goi->argc) {
 		e = Jim_GetOpt_Nvp(goi, opts, &n);

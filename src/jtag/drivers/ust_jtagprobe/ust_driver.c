@@ -139,14 +139,11 @@ int ust_jtagprobe_execute_queue(void)
 
 	retval = ERROR_OK;
 
-	if(cmd->tap != NULL)
+	if(!(ust_version_info_sent))
 	{
-		if(!(cmd->tap->version_sent))
-		{
-			uint32_t args[1]  = {2};
-			ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_NETWORK_VERSION, 1, args);
-			cmd->tap->version_sent = true;
-		}
+		uint32_t args[1]  = {2};
+		ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_NETWORK_VERSION, 1, args);
+		ust_version_info_sent = true;
 	}
 
 	while (cmd) {
