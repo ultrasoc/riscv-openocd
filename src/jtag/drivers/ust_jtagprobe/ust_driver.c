@@ -144,6 +144,7 @@ int ust_jtagprobe_execute_queue(void)
 		uint32_t args[1]  = {2};
 		ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_NETWORK_VERSION, 1, args);
 		ust_version_info_sent = true;
+		ust_version = args[0];
 	}
 
 	while (cmd) {

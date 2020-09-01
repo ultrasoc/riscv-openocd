@@ -39,6 +39,7 @@
 
 //Global variables
 
+extern int ust_version;
 extern bool ust_version_info_sent;
 
 /*-----</Macros>-------------------------------------------------*/

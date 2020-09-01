@@ -2,6 +2,7 @@
 #include "config.h"
 #endif
 
+#include "../../jtag.h"
 #include "ust_jtagprobe.h"
 #include "../ust_common/network.h"
 
@@ -90,7 +91,19 @@ int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, in
 	int err;
 
 	int bytelen = (bit_length + 7) / 8;
+
+	printf("messegeL %d \n", bytelen);
+
+
 	int msglen = 4 + bytelen;
+	if(ust_version == 2 && ust_version_info_sent)
+	{
+//		if(tap->pam)
+//		{
+			msglen += 2;
+//		}
+	}
+
 	int len = 0;
 
 	//build up scan to send to agent
@@ -101,14 +114,24 @@ int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, in
 	buffer[len++] = is_data ? JTAGPROBE_SHIFT_DR : JTAGPROBE_SHIFT_IR;
 	buffer[len++] = no_response ? JTAGPROBE_FLAG_NO_RESPONSE : 0;
 
+	printf("TEST");
+
 	//If the pam index has been set pass it to agent
-	if(tap)
+	if(ust_version == 2 && ust_version_info_sent)
 	{
+	    printf("TEST2");
 		if(tap->pam)
 		{
+		    printf("TEST3");
 			buffer[len++] = ((int)tap->pam >> 8) & 0xFF;
 			buffer[len++] = (int)tap->pam & 0xFF;
 		}
+		else
+		{
+			buffer[len++] = (int)0 & 0xFF;
+			buffer[len++] = (int)0 & 0xFF;
+		}
+
 	}
 
 	buffer[len++] = (bit_length >> 8) & 0xFF;

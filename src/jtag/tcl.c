@@ -50,6 +50,7 @@
  */
 
 bool ust_version_info_sent = true;
+int ust_version = 1;
 
 static const Jim_Nvp nvp_jtag_tap_event[] = {
 	{ .value = JTAG_TRST_ASSERTED,          .name = "post-reset" },
