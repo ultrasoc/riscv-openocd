@@ -148,6 +148,16 @@ int ust_jtagprobe_execute_queue(void)
 	}
 
 	while (cmd) {
+
+	    if(cmd->tap == NULL)
+	    {
+		printf("\n Command type with null pam %d \n\n", cmd->type);
+		cmd = cmd->next;
+		continue;
+	    }
+
+
+
 		switch (cmd->type) {
 		case JTAG_RESET:
 			LOG_WARNING("Ignoring request to reset trst: %i srst %i",
