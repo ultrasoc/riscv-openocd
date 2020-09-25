@@ -60,6 +60,9 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active,
 int interface_jtag_add_plain_dr_scan(
 		int num_bits, const uint8_t *out_bits, uint8_t *in_bits,
 		tap_state_t endstate);
+int interface_jtag_add_plain_dr_scan_tap(
+		int num_bits, const uint8_t *out_bits, uint8_t *in_bits,
+		tap_state_t endstate, struct jtag_tap* tap);
 
 int interface_jtag_add_tlr(void);
 int interface_jtag_add_pathmove(int num_states, const tap_state_t *path);

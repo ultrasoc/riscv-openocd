@@ -19,11 +19,14 @@
 #ifndef OPENOCD_RTOS_RTOS_H
 #define OPENOCD_RTOS_RTOS_H
 
+#include <stdint.h>
+
+typedef int64_t threadid_t;
+
 #include "server/server.h"
 #include "target/target.h"
 #include <jim-nvp.h>
 
-typedef int64_t threadid_t;
 typedef int64_t symbol_address_t;
 
 struct reg;

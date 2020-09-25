@@ -19,6 +19,7 @@
 #include <netdb.h>
 #endif
 
+extern int ust_version;
 
 
 typedef struct ust_jtagprobe_t {
@@ -92,16 +93,10 @@ int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, in
 
 	int bytelen = (bit_length + 7) / 8;
 
-	printf("messegeL %d \n", bytelen);
-
-
 	int msglen = 4 + bytelen;
-	if(ust_version == 2 && ust_version_info_sent)
+	if(ust_version == 2)
 	{
-//		if(tap->pam)
-//		{
-			msglen += 2;
-//		}
+        msglen += 2;
 	}
 
 	int len = 0;
@@ -114,22 +109,20 @@ int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, in
 	buffer[len++] = is_data ? JTAGPROBE_SHIFT_DR : JTAGPROBE_SHIFT_IR;
 	buffer[len++] = no_response ? JTAGPROBE_FLAG_NO_RESPONSE : 0;
 
-	printf("TEST");
-
 	//If the pam index has been set pass it to agent
-	if(ust_version == 2 && ust_version_info_sent)
+	if(ust_version == 2)
 	{
-	    printf("TEST2");
-		if(tap->pam)
+        assert(tap != 0);
+        
+		if(tap)
 		{
-		    printf("TEST3");
 			buffer[len++] = ((int)tap->pam >> 8) & 0xFF;
 			buffer[len++] = (int)tap->pam & 0xFF;
 		}
 		else
 		{
-			buffer[len++] = (int)0 & 0xFF;
-			buffer[len++] = (int)0 & 0xFF;
+			buffer[len++] = (int)(0x08 >> 8) & 0xFF; // TODO: TEMP FOR TESTING NEEDS PROPER FIX
+			buffer[len++] = (int)0x08 & 0xFF;
 		}
 
 	}
@@ -143,6 +136,14 @@ int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, in
 
 	bytes_sent = send(s->skt, buffer, len, 0);
 	EnableQuickAck(s->skt); // this is where its sent to agent
+    
+    /* MAT printf("Sent %d to 0x%x\n", bit_length, (tap->pam) ? tap->pam : 0xff);
+    for (int x = 0; x < bytelen; ++x)
+    {
+        printf("%x ", bits[x]);
+    }
+    printf("\n");
+    fflush(NULL);*/
 	
 	if (bytes_sent != len) {
 		LOG_ERROR("sent %d bytes expected to send %d\n", bytes_sent, len);
@@ -153,6 +154,8 @@ int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, in
 }
 
 int	 ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, uint32_t args[]) {
+    printf("ust_jtagprobe_send_cmd\n");
+
 	uint8_t buffer[4+2+256*4];
 	int len = 0;
 	int bytes_sent;
@@ -189,9 +192,12 @@ int	 ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, u
 int ust_jtagprobe_recv_scan(ust_jtagprobe_t *s, int bit_length, uint8_t *bits, struct jtag_tap *tap) {
 	uint8_t buffer[4096];
 	int bytelen = (bit_length + 7) / 8;
-	int msglen = 4 + bytelen;
+	int msglen = 6 + bytelen;
 	int len = 0;
 	int recv_len = 0;
+    
+    //printf("Attempting to receive data for %d\n", tap->pam);
+    //fflush(NULL);
 
 	do {
 		recv_len += recv(s->skt, buffer + recv_len, msglen - recv_len, 0);
@@ -202,8 +208,18 @@ int ust_jtagprobe_recv_scan(ust_jtagprobe_t *s, int bit_length, uint8_t *bits, s
 		LOG_ERROR("sw_link len %d\n", (buffer[0] << 24) | (buffer[1] << 16) | (buffer[2] << 8) | buffer[3]);
 		return ERROR_FAIL;
 	}
-	
-	memcpy(bits, buffer+4, bytelen);
+    
+    memcpy(bits, buffer + 6, bytelen); // TODO: Version 1 or 2 on the offset.
+    // TODO: If version 2 check that the data we have received is agaisn't the correct tap
+    
+    // MAT printf("Received %d\n", bit_length);
+    // MAT for (int x = 0; x < bytelen; ++x)
+    // MAT {
+    // MAT     printf("%x ", bits[x]);
+    // MAT }
+    // MAT printf("\n");
+    // MAT fflush(NULL);
+    
 
 	return ERROR_OK;
 }

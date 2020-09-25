@@ -33,6 +33,8 @@
 
 #include <helper/list.h>
 
+#include <rtos/rtos.h> // MAT Circular?
+
 struct reg;
 struct trace;
 struct command_context;
@@ -195,6 +197,7 @@ struct target {
 	struct rtos *rtos;					/* Instance of Real Time Operating System support */
 	bool rtos_auto_detect;				/* A flag that indicates that the RTOS has been specified as "auto"
 										 * and must be detected when symbols are offered */
+    threadid_t threadid;                /* Thread ID assigned if using RTOS/SMP (MAT? Is there a better location) */
 	struct backoff_timer backoff;
 	int smp;							/* add some target attributes for smp support */
 	struct target_list *head;

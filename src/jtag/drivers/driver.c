@@ -63,7 +63,7 @@ static void jtag_callback_queue_reset(void)
 int interface_jtag_add_ir_scan(struct jtag_tap *active,
                 const struct scan_field *in_fields, tap_state_t state)
 {
-        size_t num_taps = jtag_tap_count_enabled();
+    size_t num_taps = jtag_tap_count_enabled();
 
 	struct jtag_command *cmd = cmd_queue_alloc(sizeof(struct jtag_command));
 	struct scan_command *scan = cmd_queue_alloc(sizeof(struct scan_command));
@@ -87,16 +87,15 @@ int interface_jtag_add_ir_scan(struct jtag_tap *active,
 	for (struct jtag_tap *tap = jtag_tap_next_enabled(NULL); tap != NULL; tap = jtag_tap_next_enabled(tap)) {
 		/* search the input field list for fields for the current TAP */
 
-	if(tap->pam){
-		if(cmd->tap->pam != tap->pam){
-			continue;
-		}
-	}
+        if(cmd->tap->pam != tap->pam){
+            scan->num_fields--; // MAT: DO THIS PROPERLY! CURRENTLY ALLOC'N EXTRA FIELDS
+            continue;
+        }
 
         if (tap == active) {
             /* if TAP is listed in input fields, copy the value */
             tap->bypass = 0;
-
+            assert(in_fields->num_bits != 0);
             jtag_scan_field_clone(field, in_fields);
         } else {
             /* if a TAP isn't listed in input fields, set it to BYPASS */
@@ -106,7 +105,7 @@ int interface_jtag_add_ir_scan(struct jtag_tap *active,
                     field->num_bits = tap->ir_length;
                     field->out_value = buf_set_ones(cmd_queue_alloc(DIV_ROUND_UP(tap->ir_length, 8)), tap->ir_length);
                     field->in_value = NULL; /* do not collect input for tap's in bypass */
-            }
+        }
 
 
         /* update device information */
@@ -133,8 +132,9 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
         size_t bypass_devices = 0;
 
 	for (struct jtag_tap *tap = jtag_tap_next_enabled(NULL); tap != NULL; tap = jtag_tap_next_enabled(tap)) {
-		if (tap->bypass)
+		if ((tap->pam == active->pam) && (tap->bypass)) {
 			bypass_devices++;
+        }
 	}
 
 	struct jtag_command *cmd = cmd_queue_alloc(sizeof(struct jtag_command));
@@ -158,6 +158,11 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
 
 	for (struct jtag_tap *tap = jtag_tap_next_enabled(NULL); tap != NULL; tap = jtag_tap_next_enabled(tap)) {
 		/* if TAP is not bypassed insert matching input fields */
+        // MAT printf("%d ?= %d\n", cmd->tap->pam, tap->pam);
+        // MAT fflush(NULL);
+        if(cmd->tap->pam != tap->pam){
+            continue;
+        }
 
 		if (!tap->bypass) {
 			assert(active == tap);
@@ -166,13 +171,8 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
 			struct scan_field *start_field = field;
 #endif /* NDEBUG */
 
-			if(tap->pam){
-				if(cmd->tap->pam != tap->pam){
-					continue;
-				}
-			}
-
 			for (int j = 0; j < in_num_fields; j++) {
+                assert(in_fields[j].num_bits != 0);
 				jtag_scan_field_clone(field, in_fields + j);
 
 				field++;
@@ -189,14 +189,16 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
 			field++;
 		}
 	}
+    
+    assert(scan->num_fields != 0);
 
    // assert(field == out_fields + scan->num_fields); /* no superfluous input fields permitted */
 
         return ERROR_OK;
 }
 
-static int jtag_add_plain_scan(int num_bits, const uint8_t *out_bits,
-		uint8_t *in_bits, tap_state_t state, bool ir_scan)
+static int jtag_add_plain_scan_tap(int num_bits, const uint8_t *out_bits,
+		uint8_t *in_bits, tap_state_t state, bool ir_scan, struct jtag_tap* tap)
 {
 	struct jtag_command *cmd = cmd_queue_alloc(sizeof(struct jtag_command));
 	struct scan_command *scan = cmd_queue_alloc(sizeof(struct scan_command));
@@ -206,7 +208,7 @@ static int jtag_add_plain_scan(int num_bits, const uint8_t *out_bits,
 
 	cmd->type = JTAG_SCAN;
 	cmd->cmd.scan = scan;
-	cmd->tap = NULL;
+	cmd->tap = tap;
 
 	scan->ir_scan = ir_scan;
 	scan->num_fields = 1;
@@ -220,14 +222,31 @@ static int jtag_add_plain_scan(int num_bits, const uint8_t *out_bits,
 	return ERROR_OK;
 }
 
+static int jtag_add_plain_scan(int num_bits, const uint8_t *out_bits,
+		uint8_t *in_bits, tap_state_t state, bool ir_scan)
+{
+    return jtag_add_plain_scan_tap(num_bits, out_bits, in_bits, state, ir_scan, NULL);
+}
+
 int interface_jtag_add_plain_dr_scan(int num_bits, const uint8_t *out_bits, uint8_t *in_bits, tap_state_t state)
 {
 	return jtag_add_plain_scan(num_bits, out_bits, in_bits, state, false);
 }
 
+int interface_jtag_add_plain_dr_scan_tap(int num_bits, const uint8_t *out_bits, uint8_t *in_bits, tap_state_t state, struct jtag_tap* tap)
+{
+	return jtag_add_plain_scan_tap(num_bits, out_bits, in_bits, state, false, tap);
+}
+
+
 int interface_jtag_add_plain_ir_scan(int num_bits, const uint8_t *out_bits, uint8_t *in_bits, tap_state_t state)
 {
 	return jtag_add_plain_scan(num_bits, out_bits, in_bits, state, true);
+}
+
+int interface_jtag_add_plain_ir_scan_tap(int num_bits, const uint8_t *out_bits, uint8_t *in_bits, tap_state_t state, struct jtag_tap* tap)
+{
+	return jtag_add_plain_scan_tap(num_bits, out_bits, in_bits, state, true, tap);
 }
 
 int interface_jtag_add_tlr(void)

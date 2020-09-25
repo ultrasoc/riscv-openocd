@@ -113,7 +113,7 @@ int ust_tcf_connect(ust_tcf_t *s, const char *host, const char *port) {
 		if (s->skt == -1)
 			continue;
 
-		EnableTcpNoDelay(s->skt);
+		//EnableTcpNoDelay(s->skt);
 
 		rc = connect(s->skt, addr->ai_addr, addr->ai_addrlen);
 		if (rc != -1)

@@ -49,9 +49,6 @@
  * Holds support for accessing JTAG-specific mechanisms from TCl scripts.
  */
 
-bool ust_version_info_sent = true;
-int ust_version = 1;
-
 static const Jim_Nvp nvp_jtag_tap_event[] = {
 	{ .value = JTAG_TRST_ASSERTED,          .name = "post-reset" },
 	{ .value = JTAG_TAP_EVENT_SETUP,        .name = "setup" },
@@ -469,6 +466,7 @@ static int jim_newtap_expected_id(Jim_Nvp *n, Jim_GetOptInfo *goi,
 static int get_pam_id(Jim_Nvp *n, Jim_GetOptInfo *goi,
                       struct jtag_tap *pTap)
 {
+    extern int ust_version;
 
 	jim_wide tmp;
 	int e = Jim_GetOpt_Wide(goi, &tmp);
@@ -478,7 +476,7 @@ static int get_pam_id(Jim_Nvp *n, Jim_GetOptInfo *goi,
 	}
 
 	pTap->pam = tmp;
-	ust_version_info_sent = false;
+    ust_version = 2; /* Currently we only support 1, 2. Using -pam means we are in version 2. MAT? Add to Tap? */
 
 	return JIM_OK;
 }
