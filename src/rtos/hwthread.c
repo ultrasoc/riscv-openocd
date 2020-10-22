@@ -129,8 +129,8 @@ static int hwthread_update_threads(struct rtos *rtos)
 	} else
 		thread_list_size = 1;
     
-    printf("----- Number of threads: %d\n", thread_list_size);
-    fflush(NULL);
+    /* MAT printf("----- Number of threads: %d\n", thread_list_size);
+    fflush(NULL); */
 
 	/* Wipe out previous thread details if any, but preserve threadid. */
 	int64_t current_threadid = rtos->current_threadid;
@@ -214,11 +214,11 @@ static int hwthread_update_threads(struct rtos *rtos)
 
 	rtos->thread_count = threads_found;
     
-    printf("----- Thread Count: %d\n", rtos->thread_count);
-    for (size_t i = 0; i < rtos->thread_count; ++i)
+    // MAT printf("----- Thread Count: %d\n", rtos->thread_count);
+    /* for (size_t i = 0; i < rtos->thread_count; ++i)
     {
         printf("%d: %s\n", rtos->thread_details[i].threadid, rtos->thread_details[i].thread_name_str);
-    }
+    } */
 
 	/* we found an interesting thread, set it as current */
 	if (current_thread != 0)

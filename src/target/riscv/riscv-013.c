@@ -2555,6 +2555,8 @@ static int read_memory_progbuf(struct target *target, target_addr_t address,
 static int read_memory(struct target *target, target_addr_t address,
 		uint32_t size, uint32_t count, uint8_t *buffer)
 {
+    printf("///// read_memory: 0x%llx, size: %d, count: %d\n", address, size, count);
+    
 	RISCV013_INFO(info);
 	if (info->progbufsize >= 2 && !riscv_prefer_sba)
 		return read_memory_progbuf(target, address, size, count, buffer);
@@ -2565,13 +2567,23 @@ static int read_memory(struct target *target, target_addr_t address,
 			(get_field(info->sbcs, DMI_SBCS_SBACCESS64) && size == 8) ||
 			(get_field(info->sbcs, DMI_SBCS_SBACCESS128) && size == 16)) {
 		if (get_field(info->sbcs, DMI_SBCS_SBVERSION) == 0)
+        {
+            printf("///// Called read_memory_bus_v0\n");
 			return read_memory_bus_v0(target, address, size, count, buffer);
+        }
 		else if (get_field(info->sbcs, DMI_SBCS_SBVERSION) == 1)
+        {
+            printf("///// Called read_memory_bus_v1\n");
 			return read_memory_bus_v1(target, address, size, count, buffer);
+        }
 	}
 
 	if (info->progbufsize >= 2)
+    {
+        printf("///// Called read_memory_progbuf\n");
+
 		return read_memory_progbuf(target, address, size, count, buffer);
+    }
 
 	LOG_ERROR("Don't know how to read memory on this target.");
 	return ERROR_FAIL;

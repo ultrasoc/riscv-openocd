@@ -33,7 +33,7 @@
 
 #include <helper/list.h>
 
-#include <rtos/rtos.h> // MAT Circular?
+#include <rtos/rtos.h>
 
 struct reg;
 struct trace;

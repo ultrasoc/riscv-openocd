@@ -106,7 +106,7 @@ static int ust_scan(bool ir_scan, enum scan_type type,
         
         ++avg_count;
         
-        printf("Round trip time(scan size %d): %f (%f)\n", scan_size, elapsed.QuadPart / (double)freq.QuadPart, avg);
+        //printf("Round trip time(scan size %d): %f (%f)\n", scan_size, elapsed.QuadPart / (double)freq.QuadPart, avg);
         
 		if (err != ERROR_OK) {
 			LOG_ERROR("ust_jtagprobe recv scan failed");
@@ -174,14 +174,12 @@ int ust_jtagprobe_execute_queue(void)
 
 	while (cmd) {
 
-	    /*if(cmd->tap == NULL)
+	    if(cmd->tap == NULL)
 	    {
-		printf("\n Command type with null pam %d \n\n", cmd->type);
+		//printf("\n Command type with null pam %d \n\n", cmd->type);
 		cmd = cmd->next;
 		continue;
-	    }*/
-
-
+	    }
 
 		switch (cmd->type) {
 		case JTAG_RESET:
