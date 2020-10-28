@@ -129,9 +129,6 @@ static int hwthread_update_threads(struct rtos *rtos)
 	} else
 		thread_list_size = 1;
     
-    /* MAT printf("----- Number of threads: %d\n", thread_list_size);
-    fflush(NULL); */
-
 	/* Wipe out previous thread details if any, but preserve threadid. */
 	int64_t current_threadid = rtos->current_threadid;
 	rtos_free_threadlist(rtos);
@@ -399,6 +396,14 @@ static int hwthread_thread_packet(struct connection *connection, const char *pac
 			target->rtos->current_thread = threadid_from_target(target);
 
 		target->rtos->current_threadid = current_threadid;
+        /* This needs replicating across all targets as they have their own
+           rtos structure. If these are not correctly updated then using vCont
+           then goes wrong */
+		struct target_list *head = NULL;
+		for (head = target->head; head != NULL; head = head->next) {
+			struct target *curr = head->target;
+			curr->rtos->current_threadid = current_threadid;
+		}
 
 		gdb_put_packet(connection, "OK", 2);
 		return ERROR_OK;

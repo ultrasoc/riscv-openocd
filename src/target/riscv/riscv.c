@@ -2342,7 +2342,6 @@ int riscv_step_rtos_hart(struct target *target)
 	if (riscv_set_current_hartid(target, hartid) != ERROR_OK)
 		return ERROR_FAIL;
 	LOG_DEBUG("stepping hart %d", hartid);
-    fprintf(stderr, "stepping hart %d", hartid);
 
 	if (!riscv_is_halted(target)) {
 		LOG_ERROR("Hart isn't halted before single step!");

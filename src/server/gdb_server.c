@@ -2802,6 +2802,7 @@ static bool gdb_handle_vcont_packet(struct connection *connection, const char *p
 				 * check if the thread to be stepped is the current rtos thread
 				 * if not, we must fake the step
 				 */
+                /* If using hwthreads then it is possible to select */
 				if (target->rtos->current_thread != thread_id)
 					fake_step = true;
 			}
@@ -2856,6 +2857,8 @@ static bool gdb_handle_vcont_packet(struct connection *connection, const char *p
 				char sig_reply[128];
 
 				LOG_DEBUG("fake step thread %"PRIx64, thread_id);
+                printf("fake step thread %"PRIx64, thread_id);
+                fflush(NULL);
 
 				sig_reply_len = snprintf(sig_reply, sizeof(sig_reply),
 										 "T05thread:%016"PRIx64";", thread_id);
