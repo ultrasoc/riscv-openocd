@@ -2803,7 +2803,7 @@ static bool gdb_handle_vcont_packet(struct connection *connection, const char *p
 				 * if not, we must fake the step
 				 */
                 /* If using hwthreads then it is possible to select */
-				if (target->rtos->current_thread != thread_id)
+				if ((target->rtos->current_thread != thread_id) && (strncmp(target->rtos->type->name, "hwthread", 8) != 0))
 					fake_step = true;
 			}
 
@@ -2853,6 +2853,8 @@ static bool gdb_handle_vcont_packet(struct connection *connection, const char *p
 			 * https://sourceware.org/bugzilla/show_bug.cgi?id=22925 for details
 			 */
 			if (fake_step) {
+                fprintf(stderr, "+++++ FAKE STEPPING? +++++");
+                
 				int sig_reply_len;
 				char sig_reply[128];
 
@@ -2881,6 +2883,23 @@ static bool gdb_handle_vcont_packet(struct connection *connection, const char *p
 					gdb_connection->frontend_state = TARGET_RUNNING;
 				return true;
 			}
+            
+            /* MAT 
+                If the user has run "info threads" then GDB will have cycled through all
+                cores and left OpenOCD in the belief that it has currently selected the
+                last thread in the system. GDB is of the belief that the currently
+                selected thread is the one selected before "info threads". This mismatch
+                then causes errors in the _reporting_ of the stepped core. The correct core is
+                stepped. This change allows the reporting to be correct.
+            */
+            if (ct->rtos->current_threadid != thread_id)
+            {
+                struct target_list *head;
+                for (head = target->head; head != NULL; head = head->next) {
+                    struct target *curr = head->target;
+                    curr->rtos->current_thread = curr->rtos->current_threadid = thread_id;
+                }
+            }
 
 			retval = target_step(ct, current_pc, 0, 0);
 			if (retval == ERROR_TARGET_NOT_HALTED)

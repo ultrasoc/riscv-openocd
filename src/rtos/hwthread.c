@@ -141,6 +141,7 @@ static int hwthread_update_threads(struct rtos *rtos)
 		/* loop over all threads */
 		for (head = target->head; head != NULL; head = head->next) {
 			struct target *curr = head->target;
+            
 
 			if (!target_was_examined(curr))
 				continue;
@@ -384,6 +385,9 @@ static int hwthread_thread_packet(struct connection *connection, const char *pac
 		/* Never reached, because this case is handled by rtos_thread_packet(). */
 		sscanf(packet, "Hg%16" SCNx64, &current_threadid);
 
+        printf("Updating thread from %d to %d\n", target->rtos->current_threadid, current_threadid);
+
+        
 		if (current_threadid > 0) {
 			if (hwthread_target_for_threadid(connection, current_threadid, &curr) != ERROR_OK) {
 				LOG_ERROR("hwthread: cannot find thread id %"PRId64, current_threadid);
@@ -403,6 +407,7 @@ static int hwthread_thread_packet(struct connection *connection, const char *pac
 		for (head = target->head; head != NULL; head = head->next) {
 			struct target *curr = head->target;
 			curr->rtos->current_threadid = current_threadid;
+            curr->rtos->current_thread = target->rtos->current_thread;
 		}
 
 		gdb_put_packet(connection, "OK", 2);

@@ -786,10 +786,6 @@ int riscv_remove_breakpoint(struct target *target,
 		struct breakpoint *breakpoint)
 {
 	if (breakpoint->type == BKPT_SOFT) {
-        printf("+-+-+- Un-Setting an ebreak(0x%x) at 0x%llx\n", *(uint32_t*)breakpoint->orig_instr, breakpoint->address);
-        
-        
-        
 		if (target_write_memory(target, breakpoint->address, 2, breakpoint->length / 2,
 					breakpoint->orig_instr) != ERROR_OK) {
 			LOG_ERROR("Failed to restore instruction for %d-byte breakpoint at "
@@ -1649,6 +1645,8 @@ int riscv_openocd_step(
 		int handle_breakpoints
 ) {
 	LOG_DEBUG("stepping rtos hart");
+    
+    printf("Stepping: %d (OpenOCD: %d, GDB: %d)\n", target->threadid, target->rtos->current_thread, target->rtos->current_threadid);
 
 	if (!current)
 		riscv_set_register(target, GDB_REGNO_PC, address);
