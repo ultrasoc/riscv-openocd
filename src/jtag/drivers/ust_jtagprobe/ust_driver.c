@@ -61,15 +61,9 @@ static int ust_jtagprobe_quit(void)
 	return ERROR_OK;
 }
 
-double avg = 0.0;
-uint64_t avg_count = 0;
-bool start_avg = true;
 static int ust_scan(bool ir_scan, enum scan_type type,
 					uint8_t *buffer, int scan_size, struct jtag_tap *tap)
 {
-    LARGE_INTEGER start, end, elapsed, freq;
-    QueryPerformanceFrequency(&freq);
-    
 	int err;
 	// We assume this is the only tap or that chain position is dealt
 	// with by the connection utility.
@@ -77,11 +71,9 @@ static int ust_scan(bool ir_scan, enum scan_type type,
 		// Just push zeros through
 		uint8_t *zeros = calloc(scan_size, sizeof(uint8_t));
 		LOG_WARNING("Pushing zeros through the scan chain to get a scan from the device.");
-        QueryPerformanceCounter(&start);
 		err = ust_jtagprobe_send_scan(ust_ctx, !ir_scan, 0, scan_size, zeros, tap);
 		free(zeros);
 	} else {
-        QueryPerformanceCounter(&start);
 		err = ust_jtagprobe_send_scan(ust_ctx, !ir_scan, type == SCAN_OUT,
 									  scan_size, buffer, tap);
 	}
@@ -93,21 +85,7 @@ static int ust_scan(bool ir_scan, enum scan_type type,
 
 	if (type != SCAN_OUT) {
 		err = ust_jtagprobe_recv_scan(ust_ctx, scan_size, buffer, tap);
-        QueryPerformanceCounter(&end);
-        elapsed.QuadPart = end.QuadPart - start.QuadPart;
-        if (start_avg && avg_count == 3) 
-        {
-            avg = (elapsed.QuadPart / (double)freq.QuadPart);
-            avg_count = 0;
-            start_avg = false;
-        }
-        else if (avg_count > 3)
-            avg = ((avg * avg_count) + (elapsed.QuadPart / (double)freq.QuadPart)) / (avg_count + 1);
-        
-        ++avg_count;
-        
-        //printf("Round trip time(scan size %d): %f (%f)\n", scan_size, elapsed.QuadPart / (double)freq.QuadPart, avg);
-        
+       
 		if (err != ERROR_OK) {
 			LOG_ERROR("ust_jtagprobe recv scan failed");
 			return ERROR_FAIL;
@@ -156,7 +134,7 @@ static const struct command_registration ust_jtagprobe_command_handlers[] = {
 
 int ust_jtagprobe_execute_queue(void)
 {
-	struct jtag_command *cmd = jtag_command_queue;  //this has the tap in - luke
+	struct jtag_command *cmd = jtag_command_queue;
 	int scan_size;
 	enum scan_type type;
 	uint8_t *buffer;
@@ -176,9 +154,8 @@ int ust_jtagprobe_execute_queue(void)
 
 	    if(cmd->tap == NULL)
 	    {
-		//printf("\n Command type with null pam %d \n\n", cmd->type);
-		cmd = cmd->next;
-		continue;
+			cmd = cmd->next;
+			continue;
 	    }
 
 		switch (cmd->type) {
@@ -231,10 +208,6 @@ int ust_jtagprobe_execute_queue(void)
 							tap_state_name(cmd->cmd.scan->end_state));
 			}
 			scan_size = jtag_build_buffer(cmd->cmd.scan, &buffer);
-            if (scan_size == 0)
-            {
-                printf("----- ERROR SCAN SIZE 0 -----\n");
-            }
 			type = jtag_scan_type(cmd->cmd.scan);
 			if (ust_scan(cmd->cmd.scan->ir_scan,
 						 type, buffer, scan_size, cmd->tap) != ERROR_OK) {
