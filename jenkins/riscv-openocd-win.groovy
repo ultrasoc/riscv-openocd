@@ -9,10 +9,10 @@ emailSubject="Jenkins CI: Project name -> ${env.JOB_NAME}"
 emailSent=0
 
 testPath="test"
-buildPath="linux-build"
+buildPath="build"
 
 // Gitlab token
-def project_token = "openocd-riscv-branch-update"
+def project_token = "openocd-riscv-win-update"
 properties([
     gitLabConnection("UltraSoC"),
     pipelineTriggers([
@@ -28,7 +28,7 @@ pipeline
 {
     agent
     {
-        label "modern-linux"
+        label "win10-64bit-baremetal"
     }
 
     options
@@ -36,6 +36,11 @@ pipeline
         disableConcurrentBuilds()
         timeout(time: 120, unit: "MINUTES")
         timestamps()
+    }
+
+    environment
+    {
+        MSYSTEM = "MINGW64"
     }
 
     stages
@@ -52,22 +57,18 @@ pipeline
         {
             steps
             {
+                RunUnixOnWin("uname -a")
                 fileOperations([folderDeleteOperation(buildPath)])
                 fileOperations([folderCreateOperation(buildPath)])
-                sh """
-
-                # Build openocd on Linux.
-                #
-                git submodule update --init
-                ./bootstrap
-                cd ${buildPath}
-                ../configure --disable-internal-libjaylink --enable-dummy --enable-remote-bitbang --disable-werror --enable-ust-jtagprobe --enable-ust-mmap
-                make -j5
-                make install prefix=${WORKSPACE}/usr
-                cd ${WORKSPACE}
-                tar -zcf openocd-linux-ustbin.tar.gz usr
-                ${WORKSPACE}/usr/bin/openocd -v 2> openocd-version.txt
-                """
+                RunUnixOnWin("./bootstrap")
+                RunUnixOnWin("cd ${buildPath} ; ../configure --build=x86_64-pc-msys2 --host=x86_64-w64-mingw32 --disable-internal-libjaylink --enable-ust-jtagprobe --enable-ust-mmap --disable-werror --enable-static")
+                RunUnixOnWin("cd ${buildPath} ; make -j5")
+                // HACK to get open ocd to build statically. Needed as conf file is broken.
+                RunUnixOnWin("cd ${buildPath} ; x86_64-w64-mingw32-gcc -Wall -Wstrict-prototypes -Wformat-security -Wshadow -Wextra -Wno-unused-parameter -Wbad-function-cast -Wcast-align -static -Wredundant-decls -g -O2 -o src/openocd.exe src/main.o  src/.libs/libopenocd.a -L/mingw64/lib -lusb-1.0 -lws2_32 ./jimtcl/libjim.a")
+                RunUnixOnWin("echo %GIT_COMMIT% > openocd-version.txt")
+                RunUnixOnWin("echo %JOB_NAME% >> openocd-version.txt")
+                RunUnixOnWin("echo %BUILD_NUMBER% >> openocd-version.txt")
+                RunUnixOnWin("cd ${buildPath} ; tar -zcf ../openocd-win64-ustbin.tar.gz src/openocd.exe")
             }
         }
         stage("Archiving")
@@ -75,8 +76,7 @@ pipeline
             steps
             {
                 echo "Archiving...."
-                archive_artifacts( "gitlog" )
-                archive_artifacts( "openocd-linux-ustbin.tar.gz" )
+                archive_artifacts( "openocd-win64-ustbin.tar.gz" )
                 archive_artifacts( "openocd-version.txt" )
             }
         }
