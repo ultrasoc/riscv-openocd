@@ -212,12 +212,6 @@ static int hwthread_update_threads(struct rtos *rtos)
 
 	rtos->thread_count = threads_found;
     
-    // MAT printf("----- Thread Count: %d\n", rtos->thread_count);
-    /* for (size_t i = 0; i < rtos->thread_count; ++i)
-    {
-        printf("%d: %s\n", rtos->thread_details[i].threadid, rtos->thread_details[i].thread_name_str);
-    } */
-
 	/* we found an interesting thread, set it as current */
 	if (current_thread != 0)
 		rtos->current_thread = current_thread;
@@ -385,9 +379,6 @@ static int hwthread_thread_packet(struct connection *connection, const char *pac
 		/* Never reached, because this case is handled by rtos_thread_packet(). */
 		sscanf(packet, "Hg%16" SCNx64, &current_threadid);
 
-        printf("Updating thread from %d to %d\n", target->rtos->current_threadid, current_threadid);
-
-        
 		if (current_threadid > 0) {
 			if (hwthread_target_for_threadid(connection, current_threadid, &curr) != ERROR_OK) {
 				LOG_ERROR("hwthread: cannot find thread id %"PRId64, current_threadid);

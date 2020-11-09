@@ -1645,8 +1645,6 @@ int riscv_openocd_step(
 		int handle_breakpoints
 ) {
 	LOG_DEBUG("stepping rtos hart");
-    
-    printf("Stepping: %d (OpenOCD: %d, GDB: %d)\n", target->threadid, target->rtos->current_thread, target->rtos->current_threadid);
 
 	if (!current)
 		riscv_set_register(target, GDB_REGNO_PC, address);

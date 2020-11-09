@@ -2892,7 +2892,7 @@ static bool gdb_handle_vcont_packet(struct connection *connection, const char *p
                 then causes errors in the _reporting_ of the stepped core. The correct core is
                 stepped. This change allows the reporting to be correct.
             */
-            if (ct->rtos->current_threadid != thread_id)
+            if ((ct->rtos) && (ct->rtos->current_threadid != thread_id))
             {
                 struct target_list *head;
                 for (head = target->head; head != NULL; head = head->next) {
