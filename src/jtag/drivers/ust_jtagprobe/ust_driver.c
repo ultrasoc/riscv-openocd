@@ -143,8 +143,6 @@ COMMAND_HANDLER(ust_jtagprobe_handle_clockdivider)
 	return ERROR_COMMAND_SYNTAX_ERROR;
 }
 
-//luke todo - add to the queue
-
 static const struct command_registration ust_jtagprobe_command_handlers[] = {
 	{
 		.name = "ust_jtagprobe_port",
