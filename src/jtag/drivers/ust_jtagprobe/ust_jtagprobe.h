@@ -12,7 +12,8 @@ typedef enum jtagprobe_request_t {
 
 	JTAGPROBE_ENABLE = 100,        // ENABLE/DISABLE
 	JTAGPROBE_CLOCK_DIVIDER = 101, // CLOCK_DIVIDER
-	JTAGPROBE_PAUSELESS = 102      // PAUSE/PAUSELESS MODE
+	JTAGPROBE_PAUSELESS = 102,      // PAUSE/PAUSELESS MODE
+	JTAGPROBE_FREERUN = 103
 } jtagprobe_request_t;
 
 typedef enum jtagprobe_flags_t {

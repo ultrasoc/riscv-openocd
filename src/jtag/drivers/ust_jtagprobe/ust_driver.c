@@ -111,6 +111,40 @@ COMMAND_HANDLER(ust_jtagprobe_handle_host_command)
 	return ERROR_COMMAND_SYNTAX_ERROR;
 }
 
+COMMAND_HANDLER(ust_jtagprobe_handle_freerun)
+{
+	if (CMD_ARGC == 1) {
+		struct jtag_command *jtg_cmd = cmd_queue_alloc(sizeof(struct jtag_command));
+		struct free_run_command *frc = cmd_queue_alloc(sizeof(struct free_run_command));
+
+		jtag_queue_command(jtg_cmd);
+		jtg_cmd->type = JTAG_FREERUN;
+		jtg_cmd->cmd.freerun = frc;
+		frc->freerun = atoi(CMD_ARGV[0]);
+
+		return ERROR_OK;
+	}
+	return ERROR_COMMAND_SYNTAX_ERROR;
+}
+
+COMMAND_HANDLER(ust_jtagprobe_handle_clockdivider)
+{
+	if (CMD_ARGC == 1) {
+		struct jtag_command *jtg_cmd = cmd_queue_alloc(sizeof(struct jtag_command));
+		struct clock_divide_command *cdc = cmd_queue_alloc(sizeof(struct clock_divide_command));
+
+		jtag_queue_command(jtg_cmd);
+		jtg_cmd->type = JTAG_CLOCK_DIVIDE;
+		jtg_cmd->cmd.clock_divide = cdc;
+		cdc->divisor = atoi(CMD_ARGV[0]);
+
+		return ERROR_OK;
+	}
+	return ERROR_COMMAND_SYNTAX_ERROR;
+}
+
+//luke todo - add to the queue
+
 static const struct command_registration ust_jtagprobe_command_handlers[] = {
 	{
 		.name = "ust_jtagprobe_port",
@@ -125,6 +159,20 @@ static const struct command_registration ust_jtagprobe_command_handlers[] = {
 		.mode = COMMAND_CONFIG,
 		.help = "Set the host to use to connect to the remote jtag.\n",
 		.usage = "host_name",
+	},
+	{
+		.name = "ust_jtagprobe_freerun",
+		.handler = ust_jtagprobe_handle_freerun,
+		.mode = COMMAND_CONFIG,
+		.help = "Switches the free run on or off\n",
+		.usage = "bool",
+	},
+	{
+		.name = "ust_jtagprobe_clockdivider",
+		.handler = ust_jtagprobe_handle_clockdivider,
+		.mode = COMMAND_CONFIG,
+		.help = "Divids the clock speed by the provided value\n",
+		.usage = "clock_divider",
 	},
 	COMMAND_REGISTRATION_DONE,
 };
@@ -207,6 +255,22 @@ int ust_jtagprobe_execute_queue(void)
 		case JTAG_TMS:
 			LOG_ERROR("UNSUPPORTED: Request to explicitly set tms. Exiting.");
 			exit(-1);
+			break;
+		case JTAG_FREERUN:
+			;
+			uint32_t args_free[1]  = {cmd->cmd.freerun->freerun};
+			if (ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_FREERUN, 1, args_free) != 0)
+			{
+				retval = ERROR_JTAG_QUEUE_FAILED;
+			}
+			break;
+		case JTAG_CLOCK_DIVIDE:
+			;
+			uint32_t args_cd[1]  = {cmd->cmd.clock_divide->divisor};
+			if (ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_CLOCK_DIVIDER, 1, args_cd) != 0)
+			{
+				retval = ERROR_JTAG_QUEUE_FAILED;
+			}
 			break;
 		default:
 			LOG_ERROR("BUG: unknown JTAG command type encountered");

@@ -116,6 +116,16 @@ struct tms_command {
 	const uint8_t *bits;
 };
 
+struct free_run_command {
+	/** used as a true false switch for freerun*/
+	int freerun;
+};
+
+struct clock_divide_command {
+	/** used as a true false switch for freerun*/
+	int divisor;
+};
+
 /**
  * Defines a container type that hold a pointer to a JTAG command
  * structure of any defined type.
@@ -130,6 +140,9 @@ union jtag_command_container {
 	struct end_state_command *end_state;
 	struct sleep_command *sleep;
 	struct tms_command *tms;
+	struct free_run_command *freerun;
+	struct clock_divide_command *clock_divide;
+
 };
 
 /**
@@ -152,6 +165,9 @@ enum jtag_command_type {
 	JTAG_SLEEP        = 7,
 	JTAG_STABLECLOCKS = 8,
 	JTAG_TMS          = 9,
+	JTAG_FREERUN      = 10,
+	JTAG_CLOCK_DIVIDE = 11,
+
 };
 
 struct jtag_command {
