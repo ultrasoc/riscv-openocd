@@ -2565,13 +2565,19 @@ static int read_memory(struct target *target, target_addr_t address,
 			(get_field(info->sbcs, DMI_SBCS_SBACCESS64) && size == 8) ||
 			(get_field(info->sbcs, DMI_SBCS_SBACCESS128) && size == 16)) {
 		if (get_field(info->sbcs, DMI_SBCS_SBVERSION) == 0)
+        {
 			return read_memory_bus_v0(target, address, size, count, buffer);
+        }
 		else if (get_field(info->sbcs, DMI_SBCS_SBVERSION) == 1)
+        {
 			return read_memory_bus_v1(target, address, size, count, buffer);
+        }
 	}
 
 	if (info->progbufsize >= 2)
+    {
 		return read_memory_progbuf(target, address, size, count, buffer);
+    }
 
 	LOG_ERROR("Don't know how to read memory on this target.");
 	return ERROR_FAIL;

@@ -25,6 +25,8 @@
 #ifndef OPENOCD_JTAG_COMMANDS_H
 #define OPENOCD_JTAG_COMMANDS_H
 
+#include <jtag/jtag.h>
+
 /**
  * The inferred type of a scan_command_s structure, indicating whether
  * the command has the host scan in from the device, the host scan out
@@ -158,6 +160,7 @@ struct jtag_command {
 	union jtag_command_container cmd;
 	enum jtag_command_type type;
 	struct jtag_command *next;
+	struct jtag_tap *tap;
 };
 
 /** The current queue of jtag_command_s structures. */

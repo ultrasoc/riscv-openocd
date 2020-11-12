@@ -9,6 +9,7 @@ typedef enum jtagprobe_request_t {
 	JTAGPROBE_IDLE = 3,
 	JTAGPROBE_SHIFT_IR = 4,
 	JTAGPROBE_SHIFT_DR = 5,
+	JTAGPROBE_NETWORK_VERSION = 7,
 
 	JTAGPROBE_ENABLE = 100,        // ENABLE/DISABLE
 	JTAGPROBE_CLOCK_DIVIDER = 101, // CLOCK_DIVIDER
@@ -26,8 +27,8 @@ ust_jtagprobe_t * ust_jtagprobe_create(void);
 void ust_jtagprobe_destroy(ust_jtagprobe_t *s);
 int  ust_jtagprobe_connect(ust_jtagprobe_t *s, const char *host, const char *port);
 int  ust_jtagprobe_disconnect(ust_jtagprobe_t *s);
-int  ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, int bit_length, uint8_t *bits);
-int  ust_jtagprobe_recv_scan(ust_jtagprobe_t *s, int bit_length, uint8_t *bits);
+int  ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, int bit_length, uint8_t *bits, struct jtag_tap *tap);
+int  ust_jtagprobe_recv_scan(ust_jtagprobe_t *s, int bit_length, uint8_t *bits, struct jtag_tap *tap);
 
 int  ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, uint32_t args[]);
 

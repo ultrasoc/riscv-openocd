@@ -29,6 +29,8 @@ char * ust_jtagprobe_host;
 char * ust_jtagprobe_port;
 ust_jtagprobe_t * ust_ctx;
 
+bool ust_version_info_sent = false;
+int ust_version = 1;
 
 static int ust_jtagprobe_init(void)
 {
@@ -60,7 +62,7 @@ static int ust_jtagprobe_quit(void)
 }
 
 static int ust_scan(bool ir_scan, enum scan_type type,
-					uint8_t *buffer, int scan_size)
+					uint8_t *buffer, int scan_size, struct jtag_tap *tap)
 {
 	int err;
 	// We assume this is the only tap or that chain position is dealt
@@ -69,11 +71,11 @@ static int ust_scan(bool ir_scan, enum scan_type type,
 		// Just push zeros through
 		uint8_t *zeros = calloc(scan_size, sizeof(uint8_t));
 		LOG_WARNING("Pushing zeros through the scan chain to get a scan from the device.");
-		err = ust_jtagprobe_send_scan(ust_ctx, !ir_scan, 0, scan_size, zeros);
+		err = ust_jtagprobe_send_scan(ust_ctx, !ir_scan, 0, scan_size, zeros, tap);
 		free(zeros);
 	} else {
 		err = ust_jtagprobe_send_scan(ust_ctx, !ir_scan, type == SCAN_OUT,
-									  scan_size, buffer);
+									  scan_size, buffer, tap);
 	}
 
 	if (err != ERROR_OK) {
@@ -82,7 +84,8 @@ static int ust_scan(bool ir_scan, enum scan_type type,
 	}
 
 	if (type != SCAN_OUT) {
-		err = ust_jtagprobe_recv_scan(ust_ctx, scan_size, buffer);
+		err = ust_jtagprobe_recv_scan(ust_ctx, scan_size, buffer, tap);
+       
 		if (err != ERROR_OK) {
 			LOG_ERROR("ust_jtagprobe recv scan failed");
 			return ERROR_FAIL;
@@ -139,7 +142,22 @@ int ust_jtagprobe_execute_queue(void)
 
 	retval = ERROR_OK;
 
+	if(ust_version == 2 && !(ust_version_info_sent))
+	{
+		uint32_t args[1]  = {2};
+		ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_NETWORK_VERSION, 1, args);
+		ust_version_info_sent = true;
+		ust_version = args[0];
+	}
+
 	while (cmd) {
+
+	    if(cmd->tap == NULL)
+	    {
+			cmd = cmd->next;
+			continue;
+	    }
+
 		switch (cmd->type) {
 		case JTAG_RESET:
 			LOG_WARNING("Ignoring request to reset trst: %i srst %i",
@@ -192,7 +210,7 @@ int ust_jtagprobe_execute_queue(void)
 			scan_size = jtag_build_buffer(cmd->cmd.scan, &buffer);
 			type = jtag_scan_type(cmd->cmd.scan);
 			if (ust_scan(cmd->cmd.scan->ir_scan,
-						 type, buffer, scan_size) != ERROR_OK) {
+						 type, buffer, scan_size, cmd->tap) != ERROR_OK) {
 				retval = ERROR_JTAG_QUEUE_FAILED;
 			}
 			if (jtag_read_buffer(buffer, cmd->cmd.scan) != ERROR_OK)

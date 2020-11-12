@@ -460,8 +460,27 @@ static int jim_newtap_expected_id(Jim_Nvp *n, Jim_GetOptInfo *goi,
 	pTap->expected_ids = p;
 	pTap->expected_ids[pTap->expected_ids_cnt++] = w;
 
+    return JIM_OK;
+}
+
+static int get_pam_id(Jim_Nvp *n, Jim_GetOptInfo *goi,
+                      struct jtag_tap *pTap)
+{
+    extern int ust_version;
+
+	jim_wide tmp;
+	int e = Jim_GetOpt_Wide(goi, &tmp);
+	if (e != JIM_OK) {
+		Jim_SetResultFormatted(goi->interp, "option: %s bad parameter", n->name);
+		return e;
+	}
+
+	pTap->pam = tmp;
+    ust_version = 2; /* Currently we only support 1, 2. Using -pam means we are in version 2. MAT? Add to Tap? */
+
 	return JIM_OK;
 }
+
 
 #define NTAP_OPT_IRLEN     0
 #define NTAP_OPT_IRMASK    1
@@ -470,6 +489,8 @@ static int jim_newtap_expected_id(Jim_Nvp *n, Jim_GetOptInfo *goi,
 #define NTAP_OPT_DISABLED  4
 #define NTAP_OPT_EXPECTED_ID 5
 #define NTAP_OPT_VERSION   6
+#define NTAP_OPT_PAM   7
+
 
 static int jim_newtap_ir_param(Jim_Nvp *n, Jim_GetOptInfo *goi,
 	struct jtag_tap *pTap)
@@ -532,6 +553,7 @@ static int jim_newtap_cmd(Jim_GetOptInfo *goi)
 		{ .name = "-disable",       .value = NTAP_OPT_DISABLED },
 		{ .name = "-expected-id",       .value = NTAP_OPT_EXPECTED_ID },
 		{ .name = "-ignore-version",       .value = NTAP_OPT_VERSION },
+		{ .name = "-pam",       .value = NTAP_OPT_PAM },
 		{ .name = NULL,       .value = -1 },
 	};
 
@@ -616,6 +638,14 @@ static int jim_newtap_cmd(Jim_GetOptInfo *goi)
 			    break;
 		    case NTAP_OPT_VERSION:
 			    pTap->ignore_version = true;
+			    break;
+		    case NTAP_OPT_PAM:
+			    e = get_pam_id(n, goi, pTap);
+			    if (JIM_OK != e) {
+				    free(cp);
+				    free(pTap);
+				    return e;
+			    }
 			    break;
 		}	/* switch (n->value) */
 	}	/* while (goi->argc) */
@@ -883,7 +913,8 @@ static const struct command_registration jtag_subcommand_handlers[] = {
 			"['-expected_id' number] "
 			"['-ignore-version'] "
 			"['-ircapture' number] "
-			"['-mask' number] ",
+			"['-mask' number] "
+			"['-pam' number] ",
 	},
 	{
 		.name = "tapisenabled",

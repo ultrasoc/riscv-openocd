@@ -676,13 +676,26 @@ int riscv_add_breakpoint(struct target *target, struct breakpoint *breakpoint)
 			return ERROR_FAIL;
 		}
 
-		if (target_read_memory(target, breakpoint->address, 2, breakpoint->length / 2,
-					breakpoint->orig_instr) != ERROR_OK) {
-			LOG_ERROR("Failed to read original instruction at 0x%" TARGET_PRIxADDR,
-					breakpoint->address);
-			return ERROR_FAIL;
-		}
-
+		/////// MAT HACK for Kyrogo
+        if (breakpoint->length == 4)
+        {
+            if (target_read_memory(target, breakpoint->address, 4, 1,
+                        breakpoint->orig_instr) != ERROR_OK) {
+                LOG_ERROR("Failed to read original instruction at 0x%" TARGET_PRIxADDR,
+                        breakpoint->address);
+                return ERROR_FAIL;
+            }
+        }
+        else
+        {
+            if (target_read_memory(target, breakpoint->address, 2, 1,
+                        breakpoint->orig_instr) != ERROR_OK) {
+                LOG_ERROR("Failed to read original instruction at 0x%" TARGET_PRIxADDR,
+                        breakpoint->address);
+                return ERROR_FAIL;
+            }
+        }
+        
 		uint8_t buff[4];
 		buf_set_u32(buff, 0, breakpoint->length * CHAR_BIT, breakpoint->length == 4 ? ebreak() : ebreak_c());
 		int const retval = target_write_memory(target, breakpoint->address, 2, breakpoint->length / 2, buff);

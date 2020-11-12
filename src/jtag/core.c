@@ -462,9 +462,24 @@ void jtag_add_dr_scan(struct jtag_tap *active,
 	jtag_set_error(retval);
 }
 
+void jtag_add_plain_dr_scan_tap(int num_bits, const uint8_t *out_bits, uint8_t *in_bits,
+	tap_state_t state, struct jtag_tap* tap)
+{
+	assert(out_bits != NULL);
+	assert(state != TAP_RESET);
+
+	jtag_prelude(state);
+
+	int retval;
+	retval = interface_jtag_add_plain_dr_scan_tap(num_bits, out_bits, in_bits, state, tap);
+	jtag_set_error(retval);
+}
+
 void jtag_add_plain_dr_scan(int num_bits, const uint8_t *out_bits, uint8_t *in_bits,
 	tap_state_t state)
 {
+    jtag_add_plain_dr_scan_tap(num_bits, out_bits, in_bits, state, NULL);
+    
 	assert(out_bits != NULL);
 	assert(state != TAP_RESET);
 
@@ -907,7 +922,7 @@ void jtag_sleep(uint32_t us)
 /* a larger IR length than we ever expect to autoprobe */
 #define JTAG_IRLEN_MAX          60
 
-static int jtag_examine_chain_execute(uint8_t *idcode_buffer, unsigned num_idcode)
+static int jtag_examine_chain_execute(uint8_t *idcode_buffer, unsigned num_idcode, struct jtag_tap* tap)
 {
 	struct scan_field field = {
 		.num_bits = num_idcode * 32,
@@ -919,7 +934,7 @@ static int jtag_examine_chain_execute(uint8_t *idcode_buffer, unsigned num_idcod
 	for (unsigned i = 0; i < num_idcode; i++)
 		buf_set_u32(idcode_buffer, i * 32, 32, END_OF_CHAIN_FLAG);
 
-	jtag_add_plain_dr_scan(field.num_bits, field.out_value, field.in_value, TAP_DRPAUSE);
+	jtag_add_plain_dr_scan_tap(field.num_bits, field.out_value, field.in_value, TAP_DRPAUSE, tap);
 	jtag_add_tlr();
 	return jtag_execute_queue();
 }
@@ -1040,8 +1055,8 @@ static bool jtag_examine_chain_match_tap(const struct jtag_tap *tap)
  */
 static int jtag_examine_chain(void)
 {
-	int retval;
-	unsigned max_taps = jtag_tap_count();
+	int retval = ERROR_JTAG_INIT_FAILED;
+	size_t max_taps = jtag_tap_count();
 
 	/* Autoprobe up to this many. */
 	if (max_taps < JTAG_MAX_AUTO_TAPS)
@@ -1049,6 +1064,40 @@ static int jtag_examine_chain(void)
 
 	/* Add room for end-of-chain marker. */
 	max_taps++;
+    
+    /* We need to check the taps for multiple PAMs */
+    struct pam_count_pair {
+        struct jtag_tap* tap;
+        uint16_t count;
+    };
+    struct pam_count_pair* pams = malloc(max_taps * sizeof(struct pam_count_pair));
+    if (pams == NULL)
+        return ERROR_JTAG_INIT_FAILED;
+    size_t pam_count = 0;
+    struct jtag_tap *tap = jtag_tap_next_enabled(NULL);
+    while (tap)
+    {
+        struct pam_count_pair* found = NULL;
+        for (size_t x = 0; x < pam_count; ++x)
+        {
+            if (tap->pam == pams[x].tap->pam)
+            {
+                found = &(pams[x]);
+                break;
+            }
+        }
+        if (found)
+        {
+            found->count++;
+        }
+        else
+        {
+            pams[pam_count].tap = tap;
+            pams[pam_count++].count = 1;
+        }
+        
+        tap = jtag_tap_next_enabled(tap);        
+    }
 
 	uint8_t *idcode_buffer = malloc(max_taps * 4);
 	if (idcode_buffer == NULL)
@@ -1057,17 +1106,23 @@ static int jtag_examine_chain(void)
 	/* DR scan to collect BYPASS or IDCODE register contents.
 	 * Then make sure the scan data has both ones and zeroes.
 	 */
-	LOG_DEBUG("DR scan interrogation for IDCODE/BYPASS");
-	retval = jtag_examine_chain_execute(idcode_buffer, max_taps);
-	if (retval != ERROR_OK)
-		goto out;
+    size_t offset = 0;
+    for (size_t x = 0; x < pam_count; x++)
+    {        
+        LOG_DEBUG("DR scan interrogation for IDCODE/BYPASS on PAM %d(Count: %d)", pams[x].tap->pam, pams[x].count);
+        retval = jtag_examine_chain_execute(idcode_buffer + (offset*4), max_taps - offset, pams[x].tap);
+        if (retval != ERROR_OK)
+            goto out;
+        offset += pams[x].count;
+    }
+    
 	if (!jtag_examine_chain_check(idcode_buffer, max_taps)) {
 		retval = ERROR_JTAG_INIT_FAILED;
 		goto out;
 	}
 
 	/* Point at the 1st predefined tap, if any */
-	struct jtag_tap *tap = jtag_tap_next_enabled(NULL);
+	tap = jtag_tap_next_enabled(NULL);
 
 	unsigned bit_count = 0;
 	unsigned autocount = 0;
@@ -1460,14 +1515,14 @@ int jtag_init_inner(struct command_context *cmd_ctx)
 	 * latter is uncommon, but easily worked around:  provide
 	 * ircapture/irmask values during TAP setup.)
 	 */
-	retval = jtag_validate_ircapture();
-	if (retval != ERROR_OK) {
+	// MAT retval = jtag_validate_ircapture();
+	// if (retval != ERROR_OK) {
 		/* The target might be powered down. The user
 		 * can power it up and reset it after firing
 		 * up OpenOCD.
 		 */
-		issue_setup = false;
-	}
+		//issue_setup = false;
+	//}
 
 	if (issue_setup)
 		jtag_notify_event(JTAG_TAP_EVENT_SETUP);
