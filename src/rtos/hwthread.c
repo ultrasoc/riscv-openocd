@@ -128,7 +128,7 @@ static int hwthread_update_threads(struct rtos *rtos)
 		}
 	} else
 		thread_list_size = 1;
-    
+
 	/* Wipe out previous thread details if any, but preserve threadid. */
 	int64_t current_threadid = rtos->current_threadid;
 	rtos_free_threadlist(rtos);
@@ -141,7 +141,6 @@ static int hwthread_update_threads(struct rtos *rtos)
 		/* loop over all threads */
 		for (head = target->head; head != NULL; head = head->next) {
 			struct target *curr = head->target;
-            
 
 			if (!target_was_examined(curr))
 				continue;
@@ -211,7 +210,7 @@ static int hwthread_update_threads(struct rtos *rtos)
 	}
 
 	rtos->thread_count = threads_found;
-    
+
 	/* we found an interesting thread, set it as current */
 	if (current_thread != 0)
 		rtos->current_thread = current_thread;

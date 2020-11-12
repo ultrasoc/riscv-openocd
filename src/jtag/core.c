@@ -1065,7 +1065,7 @@ static int jtag_examine_chain(void)
 	/* Add room for end-of-chain marker. */
 	max_taps++;
     
-    /* We need to check the taps for multiple PAMs */ /* MAT */
+    /* We need to check the taps for multiple PAMs */
     struct pam_count_pair {
         struct jtag_tap* tap;
         uint16_t count;
@@ -1077,8 +1077,6 @@ static int jtag_examine_chain(void)
     struct jtag_tap *tap = jtag_tap_next_enabled(NULL);
     while (tap)
     {
-        printf("Tap: %s, %d\n", tap->dotted_name, tap->pam);
-        
         struct pam_count_pair* found = NULL;
         for (size_t x = 0; x < pam_count; ++x)
         {
@@ -1118,10 +1116,6 @@ static int jtag_examine_chain(void)
         offset += pams[x].count;
     }
     
-    //printf("offset: %d, max_taps: %d\n", offset, max_taps);
-    //fflush(NULL);
-    //assert(offset == max_taps);
-
 	if (!jtag_examine_chain_check(idcode_buffer, max_taps)) {
 		retval = ERROR_JTAG_INIT_FAILED;
 		goto out;
@@ -1342,7 +1336,7 @@ void jtag_tap_init(struct jtag_tap *tap)
 	tap->expected = calloc(1, ir_len_bytes);
 	tap->expected_mask = calloc(1, ir_len_bytes);
 	tap->cur_instr = malloc(ir_len_bytes);
-    
+
 	/** @todo cope better with ir_length bigger than 32 bits */
 	if (ir_len_bits > 32)
 		ir_len_bits = 32;

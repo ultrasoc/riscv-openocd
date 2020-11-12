@@ -134,14 +134,6 @@ int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, in
 
 	bytes_sent = send(s->skt, buffer, len, 0);
 	EnableQuickAck(s->skt);
-    
-    /* MAT printf("Sent %d to 0x%x\n", bit_length, (tap->pam) ? tap->pam : 0xff);
-    for (int x = 0; x < bytelen; ++x)
-    {
-        printf("%x ", bits[x]);
-    }
-    printf("\n");
-    fflush(NULL);*/
 	
 	if (bytes_sent != len) {
 		LOG_ERROR("sent %d bytes expected to send %d\n", bytes_sent, len);
@@ -152,7 +144,7 @@ int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, in
 }
 
 int	 ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, uint32_t args[]) {
-    printf("ust_jtagprobe_send_cmd - DONT HAVE TAP!\n");
+    LOG_ERROR("ust_jtagprobe_send_cmd - DONT HAVE TAP!\n");
 
 	uint8_t buffer[4+2+256*4];
 	int len = 0;
@@ -223,14 +215,5 @@ int ust_jtagprobe_recv_scan(ust_jtagprobe_t *s, int bit_length, uint8_t *bits, s
         memcpy(bits, buffer + V2_DATA_START, bytelen);
     }
         
-    
-/*    printf("Received %d\n", bit_length);
-    for (int x = 0; x < bytelen; ++x)
-    {
-        printf("%x ", bits[x]);
-    }
-    printf("\n");
-    fflush(NULL);*/
-
 	return ERROR_OK;
 }

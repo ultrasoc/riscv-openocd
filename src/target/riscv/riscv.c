@@ -696,24 +696,9 @@ int riscv_add_breakpoint(struct target *target, struct breakpoint *breakpoint)
             }
         }
         
-        //printf("----- Setting an ebreak(0x%x) over 0x%x at 0x%llx\n", ebreak(), *(uint32_t*)(breakpoint->orig_instr), breakpoint->address);
-
 		uint8_t buff[4];
 		buf_set_u32(buff, 0, breakpoint->length * CHAR_BIT, breakpoint->length == 4 ? ebreak() : ebreak_c());
 		int const retval = target_write_memory(target, breakpoint->address, 2, breakpoint->length / 2, buff);
-        
-        /*printf("Confirming... ");
-        uint8_t buff2[4];
-        int tm = target_read_memory(target, breakpoint->address, 4, 1, buff2);
-        assert(tm == ERROR_OK);
-        if (*buff2 == *buff)
-        {
-            printf("Confirmed\n");
-        }
-        else
-        {
-            printf("Failed (0x%08x != 0x%08x)\n", *((uint32_t*)buff), *((uint32_t*)buff2));
-        }*/
 
 		if (retval != ERROR_OK) {
 			LOG_ERROR("Failed to write %d-byte breakpoint instruction at 0x%"
@@ -2331,7 +2316,6 @@ int riscv_step_rtos_hart(struct target *target)
 		hartid = r->rtos_hartid;
 		if (hartid == -1) {
 			LOG_DEBUG("GDB has asked me to step \"any\" thread, so I'm stepping hart 0.");
-			fprintf(stderr, "GDB has asked me to step \"any\" thread, so I'm stepping hart 0.");
 			hartid = 0;
 		}
 	}

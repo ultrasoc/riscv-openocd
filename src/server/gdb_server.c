@@ -2853,14 +2853,10 @@ static bool gdb_handle_vcont_packet(struct connection *connection, const char *p
 			 * https://sourceware.org/bugzilla/show_bug.cgi?id=22925 for details
 			 */
 			if (fake_step) {
-                fprintf(stderr, "+++++ FAKE STEPPING? +++++");
-                
 				int sig_reply_len;
 				char sig_reply[128];
 
 				LOG_DEBUG("fake step thread %"PRIx64, thread_id);
-                printf("fake step thread %"PRIx64, thread_id);
-                fflush(NULL);
 
 				sig_reply_len = snprintf(sig_reply, sizeof(sig_reply),
 										 "T05thread:%016"PRIx64";", thread_id);
@@ -2884,7 +2880,7 @@ static bool gdb_handle_vcont_packet(struct connection *connection, const char *p
 				return true;
 			}
             
-            /* MAT 
+            /*  
                 If the user has run "info threads" then GDB will have cycled through all
                 cores and left OpenOCD in the belief that it has currently selected the
                 last thread in the system. GDB is of the belief that the currently

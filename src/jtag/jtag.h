@@ -37,8 +37,6 @@
 #define DEBUG_JTAG_IOZ 64
 #endif
 
-//Global variables
-
 /*-----</Macros>-------------------------------------------------*/
 
 /**

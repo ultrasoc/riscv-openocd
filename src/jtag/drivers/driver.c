@@ -88,7 +88,7 @@ int interface_jtag_add_ir_scan(struct jtag_tap *active,
 		/* search the input field list for fields for the current TAP */
 
         if(cmd->tap->pam != tap->pam){
-            scan->num_fields--; // MAT: DO THIS PROPERLY! CURRENTLY ALLOC'N EXTRA FIELDS
+            scan->num_fields--;
             continue;
         }
 
@@ -114,10 +114,8 @@ int interface_jtag_add_ir_scan(struct jtag_tap *active,
         field++;
 
 	}
-	/* paranoia: jtag_tap_count_enabled() and jtag_tap_next_enabled() not in sync */
-    //assert(field == out_fields + num_taps);
 
-        return ERROR_OK;
+	return ERROR_OK;
 }
 
 /**
@@ -158,8 +156,6 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
 
 	for (struct jtag_tap *tap = jtag_tap_next_enabled(NULL); tap != NULL; tap = jtag_tap_next_enabled(tap)) {
 		/* if TAP is not bypassed insert matching input fields */
-        // MAT printf("%d ?= %d\n", cmd->tap->pam, tap->pam);
-        // MAT fflush(NULL);
         if(cmd->tap->pam != tap->pam){
             continue;
         }
@@ -192,9 +188,7 @@ int interface_jtag_add_dr_scan(struct jtag_tap *active, int in_num_fields,
     
     assert(scan->num_fields != 0);
 
-   // assert(field == out_fields + scan->num_fields); /* no superfluous input fields permitted */
-
-        return ERROR_OK;
+	return ERROR_OK;
 }
 
 static int jtag_add_plain_scan_tap(int num_bits, const uint8_t *out_bits,
