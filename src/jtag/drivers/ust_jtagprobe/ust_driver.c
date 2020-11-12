@@ -169,7 +169,7 @@ static const struct command_registration ust_jtagprobe_command_handlers[] = {
 		.name = "ust_jtagprobe_clockdivider",
 		.handler = ust_jtagprobe_handle_clockdivider,
 		.mode = COMMAND_CONFIG,
-		.help = "Divids the clock speed by the provided value\n",
+		.help = "Divides the clock speed by the provided value\n",
 		.usage = "clock_divider",
 	},
 	COMMAND_REGISTRATION_DONE,

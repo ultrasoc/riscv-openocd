@@ -122,7 +122,7 @@ struct free_run_command {
 };
 
 struct clock_divide_command {
-	/** used as a true false switch for freerun*/
+	/** divisor for jtag*/
 	int divisor;
 };
 
