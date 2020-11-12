@@ -77,6 +77,7 @@ pipeline
             {
                 echo "Archiving...."
                 archive_artifacts( "openocd-win64-ustbin.tar.gz" )
+                archive_artifacts( "build/src/openocd.exe" )
                 archive_artifacts( "openocd-version.txt" )
             }
         }
