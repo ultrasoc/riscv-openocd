@@ -65,7 +65,7 @@ pipeline
                 make -j5
                 make install prefix=${WORKSPACE}/usr
                 cd ${WORKSPACE}
-                tar -zcf openocd-linux-ustbin.tar.gz usr
+                tar -zcf openocd-linux-ustbin.tar.gz usr/bin
                 ${WORKSPACE}/usr/bin/openocd -v 2> openocd-version.txt
                 """
             }
