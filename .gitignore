@@ -102,3 +102,7 @@ TAGS
 # ctags tag files
 tags
 .pydevproject
+
+#qt stuff
+openocd.pro
+openocd.pro.user

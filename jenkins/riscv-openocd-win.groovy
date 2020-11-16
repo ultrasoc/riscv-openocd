@@ -65,9 +65,9 @@ pipeline
                 RunUnixOnWin("cd ${buildPath} ; make -j5")
                 // HACK to get open ocd to build statically. Needed as conf file is broken.
                 RunUnixOnWin("cd ${buildPath} ; x86_64-w64-mingw32-gcc -Wall -Wstrict-prototypes -Wformat-security -Wshadow -Wextra -Wno-unused-parameter -Wbad-function-cast -Wcast-align -static -Wredundant-decls -g -O2 -o src/openocd.exe src/main.o  src/.libs/libopenocd.a -L/mingw64/lib -lusb-1.0 -lws2_32 ./jimtcl/libjim.a")
-                RunUnixOnWin("echo %GIT_COMMIT% > openocd-version.txt")
-                RunUnixOnWin("echo %JOB_NAME% >> openocd-version.txt")
-                RunUnixOnWin("echo %BUILD_NUMBER% >> openocd-version.txt")
+                RunUnixOnWin("echo %GIT_COMMIT% > openocd_version.txt")
+                RunUnixOnWin("echo %JOB_NAME% >> openocd_version.txt")
+                RunUnixOnWin("echo %BUILD_NUMBER% >> openocd_version.txt")
                 RunUnixOnWin("cd ${buildPath} ; tar -zcf ../openocd-win64-ustbin.tar.gz src/openocd.exe")
             }
         }
@@ -77,7 +77,8 @@ pipeline
             {
                 echo "Archiving...."
                 archive_artifacts( "openocd-win64-ustbin.tar.gz" )
-                archive_artifacts( "openocd-version.txt" )
+                archive_artifacts( "build/src/openocd.exe" )
+                archive_artifacts( "openocd_version.txt" )
             }
         }
     }

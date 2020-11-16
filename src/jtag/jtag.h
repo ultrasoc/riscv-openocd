@@ -155,6 +155,9 @@ struct jtag_tap {
 	struct jtag_tap *next_tap;
 	/* private pointer to support none-jtag specific functions */
 	void *priv;
+
+    // Added to store jpam module index
+    uint16_t pam;
 };
 
 void jtag_tap_init(struct jtag_tap *tap);
@@ -374,6 +377,8 @@ void jtag_add_dr_scan_check(struct jtag_tap *tap, int num_fields,
  */
 void jtag_add_plain_dr_scan(int num_bits,
 		const uint8_t *out_bits, uint8_t *in_bits, tap_state_t endstate);
+void jtag_add_plain_dr_scan_tap(int num_bits,
+		const uint8_t *out_bits, uint8_t *in_bits, tap_state_t endstate, struct jtag_tap *tap);
 
 /**
  * Defines the type of data passed to the jtag_callback_t interface.

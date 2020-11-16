@@ -43,9 +43,25 @@ int hwthread_set_reg(struct rtos *rtos, uint32_t reg_num, uint8_t *reg_value);
 
 extern int rtos_thread_packet(struct connection *connection, const char *packet, int packet_size);
 
-static inline threadid_t threadid_from_target(const struct target *target)
+static inline threadid_t threadid_from_target(struct target *target)
 {
-	return target->coreid + 1;
+    static threadid_t next_thread_id = 1;
+    
+    /* This proves problomatic if two targets have the same coreid.
+       In systems with multiple TAPS connected to multiple RISC-V's
+       the coreid appears to be used for the hartsel index. It seems
+       easier and less prone to erros to change the ThreadID as opposed 
+       to mess with the hartsel code. NOTE: The problem is not in openocd,
+       GDB cant cope with threads having the same id. */
+    
+    /* ThreadID gets set to zero which would be invalid for GDB so on entry
+       if its found to be equal to zero we need to create a new one */
+    if (target->threadid == 0)
+    {
+        target->threadid = next_thread_id++;
+    }
+    
+	return target->threadid;
 }
 
 const struct rtos_type hwthread_rtos = {
@@ -66,6 +82,8 @@ struct hwthread_params {
 
 static int hwthread_fill_thread(struct rtos *rtos, struct target *curr, int thread_num)
 {
+    static uint8_t thread_name_count = 0;
+    
 	char tmp_str[HW_THREAD_NAME_STR_SIZE];
 	threadid_t tid = threadid_from_target(curr);
 
@@ -78,6 +96,8 @@ static int hwthread_fill_thread(struct rtos *rtos, struct target *curr, int thre
 	rtos->thread_details[thread_num].thread_name_str = strdup(target_name(curr));
 	snprintf(tmp_str, HW_THREAD_NAME_STR_SIZE-1, "state: %s", debug_reason_name(curr));
 	rtos->thread_details[thread_num].extra_info_str = strdup(tmp_str);
+
+    ++thread_name_count;
 
 	return ERROR_OK;
 }
@@ -370,6 +390,15 @@ static int hwthread_thread_packet(struct connection *connection, const char *pac
 			target->rtos->current_thread = threadid_from_target(target);
 
 		target->rtos->current_threadid = current_threadid;
+        /* This needs replicating across all targets as they have their own
+           rtos structure. If these are not correctly updated then using vCont
+           then goes wrong */
+		struct target_list *head = NULL;
+		for (head = target->head; head != NULL; head = head->next) {
+			struct target *curr = head->target;
+			curr->rtos->current_threadid = current_threadid;
+            curr->rtos->current_thread = target->rtos->current_thread;
+		}
 
 		gdb_put_packet(connection, "OK", 2);
 		return ERROR_OK;
