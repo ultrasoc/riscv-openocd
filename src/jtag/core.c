@@ -604,12 +604,16 @@ int jtag_add_statemove(tap_state_t goal_state)
 	return ERROR_OK;
 }
 
-void jtag_add_runtest(int num_cycles, tap_state_t state)
+void jtag_add_runtest_tap(int num_cycles, tap_state_t state, struct jtag_tap *tap)
 {
 	jtag_prelude(state);
-	jtag_set_error(interface_jtag_add_runtest(num_cycles, state));
+	jtag_set_error(interface_jtag_add_runtest(num_cycles, state, tap));
 }
 
+void jtag_add_runtest(int num_cycles, tap_state_t state)
+{
+    jtag_add_runtest_tap(num_cycles, state, NULL);
+}
 
 void jtag_add_clocks(int num_cycles)
 {

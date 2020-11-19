@@ -153,6 +153,10 @@ int	 ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, u
 	int i;
 
 	int payload_length = 2 + num_args * 4;
+    if (ust_version == 2)
+	{
+        msglen += 2;
+	}
 
 	buffer[len++] = 0;
 	buffer[len++] = 0;

@@ -535,7 +535,7 @@ static int zy1000_jtag_add_clocks(int num_cycles, tap_state_t state, tap_state_t
 	return ERROR_OK;
 }
 
-int interface_jtag_add_runtest(int num_cycles, tap_state_t state)
+int interface_jtag_add_runtest(int num_cycles, tap_state_t state, struct jtag_tap*)
 {
 	return zy1000_jtag_add_clocks(num_cycles, state, TAP_IDLE);
 }

@@ -151,9 +151,20 @@ int ust_jtagprobe_execute_queue(void)
 	}
 
 	while (cmd) {
-
-	    if(cmd->tap == NULL)
+	    /* Version 1 can handle commands with no TAP(JPAM) specified as it 
+           only supports a single JPAM */
+        if ((ust_version == 2) && (cmd->tap == NULL))
 	    {
+            if (cmd->type == JTAG_RUNTEST)
+            {
+                LOG_ERROR("Command received with no TAP using JTAGProbe V2. Exiting.");
+				exit(-1);
+            }
+            else
+            {
+                LOG_WARNING("Command received with no TAP using JTAGProbe V2. Command ignored.");
+            }
+            
 			cmd = cmd->next;
 			continue;
 	    }
