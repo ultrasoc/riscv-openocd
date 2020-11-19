@@ -20,6 +20,7 @@
 #endif
 
 extern int ust_version;
+extern int ust_version_info_sent;
 
 #define V1_DATA_START           4
 #define V2_DATA_START           6
@@ -143,9 +144,9 @@ int ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, in
 	}
 }
 
-int	 ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, uint32_t args[]) {
-    LOG_ERROR("ust_jtagprobe_send_cmd - DONT HAVE TAP!\n");
-
+int	 ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, uint32_t args[], struct jtag_tap *tap) {
+    assert(ust_version == 1 || !ust_version_info_sent || (ust_version == 2 && tap != NULL));
+    
 	uint8_t buffer[4+2+256*4];
 	int len = 0;
 	int bytes_sent;
@@ -153,9 +154,9 @@ int	 ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, u
 	int i;
 
 	int payload_length = 2 + num_args * 4;
-    if (ust_version == 2)
+    if (ust_version == 2 && (request != JTAGPROBE_NETWORK_VERSION))
 	{
-        msglen += 2;
+        payload_length += 2;
 	}
 
 	buffer[len++] = 0;
@@ -164,6 +165,17 @@ int	 ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, u
 	buffer[len++] = payload_length & 0xFF;
 	buffer[len++] = request;
 	buffer[len++] = num_args;
+    
+    /* If version 2 add PAM unless this is the change network version command
+       as that can only be changed the once and we always start in V1 */
+    if ((ust_version == 2) && (request != JTAGPROBE_NETWORK_VERSION))
+    {
+        assert(ust_version_info_sent);
+        assert((tap != NULL) && (tap->pam != 0));
+        
+        buffer[len++] = ((int)tap->pam >> 8) & 0xFF;
+        buffer[len++] = (int)tap->pam & 0xFF;
+    }
 
 	for (i = 0; i != num_args; i++) {
 		buffer[len++] = (args[i] >> 24) & 0xFF;

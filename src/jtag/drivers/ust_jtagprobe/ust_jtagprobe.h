@@ -30,6 +30,6 @@ int  ust_jtagprobe_disconnect(ust_jtagprobe_t *s);
 int  ust_jtagprobe_send_scan(ust_jtagprobe_t *s, int is_data, int no_response, int bit_length, uint8_t *bits, struct jtag_tap *tap);
 int  ust_jtagprobe_recv_scan(ust_jtagprobe_t *s, int bit_length, uint8_t *bits, struct jtag_tap *tap);
 
-int  ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, uint32_t args[]);
+int  ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, uint32_t args[], struct jtag_tap *tap);
 
 #endif /* OPENOCD_UST_JTAGPROBE_H */

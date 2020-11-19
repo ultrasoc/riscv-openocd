@@ -145,7 +145,7 @@ int ust_jtagprobe_execute_queue(void)
 	if(ust_version == 2 && !(ust_version_info_sent))
 	{
 		uint32_t args[1]  = {2};
-		ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_NETWORK_VERSION, 1, args);
+		ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_NETWORK_VERSION, 1, args, NULL);
 		ust_version_info_sent = true;
 		ust_version = args[0];
 	}
@@ -157,12 +157,9 @@ int ust_jtagprobe_execute_queue(void)
 	    {
             if (cmd->type == JTAG_RUNTEST)
             {
+                assert(false);
                 LOG_ERROR("Command received with no TAP using JTAGProbe V2. Exiting.");
 				exit(-1);
-            }
-            else
-            {
-                LOG_WARNING("Command received with no TAP using JTAGProbe V2. Command ignored.");
             }
             
 			cmd = cmd->next;
@@ -189,7 +186,7 @@ int ust_jtagprobe_execute_queue(void)
 			}
 			for (i=0; i<cmd->cmd.runtest->num_cycles; i++) {
 				if (ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_IDLE,
-										   0, NULL) != 0) {
+										   0, NULL, cmd->tap) != 0) {
 					retval = ERROR_JTAG_QUEUE_FAILED;
 				}
 			}
