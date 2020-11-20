@@ -281,21 +281,40 @@ int ust_jtagprobe_execute_queue(void)
 			exit(-1);
 			break;
 		case JTAG_FREERUN:
-			;
-			uint32_t args_free[1]  = {cmd->cmd.freerun->freerun};
-			if (ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_FREERUN, 1, args_free) != 0)
-			{
-				retval = ERROR_JTAG_QUEUE_FAILED;
-			}
+        {
+            bool success = false;
+            for (struct jtag_tap* tap = jtag_all_taps(); tap; tap = tap->next_tap)
+            {
+                uint32_t args_free[1]  = {cmd->cmd.freerun->freerun};
+                if (ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_FREERUN, 1, args_free, tap) != 0)
+                {
+                    if (success)
+                    {
+                        LOG_ERROR("Failed to set freerun on PAM %d. Hardware is now in an inconsistant state. Exiting.", tap->pam);
+                        exit(-1);
+                    }
+                    retval = ERROR_JTAG_QUEUE_FAILED;
+                }
+                else
+                {
+                    success = true;
+                }
+            }
 			break;
+        }
 		case JTAG_CLOCK_DIVIDE:
-			;
-			uint32_t args_cd[1]  = {cmd->cmd.clock_divide->divisor};
-			if (ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_CLOCK_DIVIDER, 1, args_cd) != 0)
-			{
-				retval = ERROR_JTAG_QUEUE_FAILED;
-			}
+        {
+            for (struct jtag_tap* tap = jtag_all_taps(); tap; tap = tap->next_tap)
+            {
+                uint32_t args_free[1]  = {cmd->cmd.clock_divide->divisor};
+                if (ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_CLOCK_DIVIDER, 1, args_free, tap) != 0)
+                {
+                    LOG_ERROR("Failed to set clock divide on PAM %d. PAM's are now running at different speeds.", tap->pam);
+                    retval = ERROR_JTAG_QUEUE_FAILED;
+                }
+            }
 			break;
+        }
 		default:
 			LOG_ERROR("BUG: unknown JTAG command type encountered");
 			exit(-1);

@@ -395,7 +395,7 @@ static int hwthread_thread_packet(struct connection *connection, const char *pac
            then goes wrong */
 		struct target_list *head = NULL;
 		for (head = target->head; head != NULL; head = head->next) {
-			struct target *curr = head->target;
+			curr = head->target;
 			curr->rtos->current_threadid = current_threadid;
             curr->rtos->current_thread = target->rtos->current_thread;
 		}

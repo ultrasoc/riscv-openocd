@@ -168,7 +168,7 @@ enum jtag_command_type {
 	JTAG_STABLECLOCKS = 8,
 	JTAG_TMS          = 9,
 	JTAG_FREERUN      = 10,
-	JTAG_CLOCK_DIVIDE = 11,
+    JTAG_CLOCK_DIVIDE = 11,
 
 };
 
