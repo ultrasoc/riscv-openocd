@@ -170,6 +170,7 @@ int	 ust_jtagprobe_send_cmd(ust_jtagprobe_t *s, int request, uint8_t num_args, u
        as that can only be changed the once and we always start in V1 */
     if ((ust_version == 2) && (request != JTAGPROBE_NETWORK_VERSION))
     {
+        assert(len == V2_PAM_LOCATION_OUT);
         assert(ust_version_info_sent);
         assert((tap != NULL) && (tap->pam != 0));
         

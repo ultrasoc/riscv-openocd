@@ -208,8 +208,11 @@ int ust_jtagprobe_execute_queue(void)
 				exit(-1);
             }
             
-			cmd = cmd->next;
-			continue;
+            if ((cmd->type != JTAG_CLOCK_DIVIDE) && (cmd->type != JTAG_FREERUN))
+            {
+                cmd = cmd->next;
+                continue;
+            }
 	    }
 
 		switch (cmd->type) {
@@ -304,9 +307,9 @@ int ust_jtagprobe_execute_queue(void)
         }
 		case JTAG_CLOCK_DIVIDE:
         {
+            uint32_t args_free[1]  = {cmd->cmd.clock_divide->divisor};
             for (struct jtag_tap* tap = jtag_all_taps(); tap; tap = tap->next_tap)
             {
-                uint32_t args_free[1]  = {cmd->cmd.clock_divide->divisor};
                 if (ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_CLOCK_DIVIDER, 1, args_free, tap) != 0)
                 {
                     LOG_ERROR("Failed to set clock divide on PAM %d. PAM's are now running at different speeds.", tap->pam);
