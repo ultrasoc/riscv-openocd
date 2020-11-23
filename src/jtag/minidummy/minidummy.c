@@ -90,7 +90,7 @@ int interface_jtag_add_reset(int req_trst, int req_srst)
 	return ERROR_OK;
 }
 
-int interface_jtag_add_runtest(int num_cycles, tap_state_t state)
+int interface_jtag_add_runtest(int num_cycles, tap_state_t state, struct jtag_tap*)
 {
 	/* synchronously do the operation here */
 

@@ -510,6 +510,7 @@ int jtag_add_statemove(tap_state_t goal_state);
  * @param endstate The final state.
  */
 void jtag_add_runtest(int num_cycles, tap_state_t endstate);
+void jtag_add_runtest_tap(int num_cycles, tap_state_t endstate, struct jtag_tap *tap); // On a specific tap
 
 /**
  * A reset of the TAP state machine can be requested.

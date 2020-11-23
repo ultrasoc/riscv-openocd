@@ -550,7 +550,7 @@ static dmi_status_t dmi_scan(struct target *target, uint32_t *address_in,
 		idle_count += info->ac_busy_delay;
 
 	if (idle_count)
-		jtag_add_runtest(idle_count, TAP_IDLE);
+		jtag_add_runtest_tap(idle_count, TAP_IDLE, target->tap);
 
 	int retval = jtag_execute_queue();
 	if (retval != ERROR_OK) {
@@ -2184,7 +2184,7 @@ static int read_memory_bus_v1(struct target *target, target_addr_t address,
 		sb_write_address(target, next_address);
 
 		if (info->bus_master_read_delay) {
-			jtag_add_runtest(info->bus_master_read_delay, TAP_IDLE);
+			jtag_add_runtest_tap(info->bus_master_read_delay, TAP_IDLE, target->tap);
 			if (jtag_execute_queue() != ERROR_OK) {
 				LOG_ERROR("Failed to scan idle sequence");
 				return ERROR_FAIL;
@@ -2716,7 +2716,7 @@ static int write_memory_bus_v1(struct target *target, target_addr_t address,
 			log_memory_access(address + i * size, value, size, false);
 
 			if (info->bus_master_write_delay) {
-				jtag_add_runtest(info->bus_master_write_delay, TAP_IDLE);
+				jtag_add_runtest_tap(info->bus_master_write_delay, TAP_IDLE, target->tap);
 				if (jtag_execute_queue() != ERROR_OK) {
 					LOG_ERROR("Failed to scan idle sequence");
 					return ERROR_FAIL;

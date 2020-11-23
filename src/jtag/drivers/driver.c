@@ -306,7 +306,7 @@ int interface_jtag_add_pathmove(int num_states, const tap_state_t *path)
 	return ERROR_OK;
 }
 
-int interface_jtag_add_runtest(int num_cycles, tap_state_t state)
+int interface_jtag_add_runtest(int num_cycles, tap_state_t state, struct jtag_tap *tap)
 {
 	/* allocate memory for a new list member */
 	struct jtag_command *cmd = cmd_queue_alloc(sizeof(struct jtag_command));
@@ -314,7 +314,7 @@ int interface_jtag_add_runtest(int num_cycles, tap_state_t state)
 	jtag_queue_command(cmd);
 
 	cmd->type = JTAG_RUNTEST;
-	cmd->tap = NULL;
+	cmd->tap = tap;
 
 	cmd->cmd.runtest = cmd_queue_alloc(sizeof(struct runtest_command));
 	cmd->cmd.runtest->num_cycles = num_cycles;

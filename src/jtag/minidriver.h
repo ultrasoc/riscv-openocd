@@ -66,7 +66,7 @@ int interface_jtag_add_plain_dr_scan_tap(
 
 int interface_jtag_add_tlr(void);
 int interface_jtag_add_pathmove(int num_states, const tap_state_t *path);
-int interface_jtag_add_runtest(int num_cycles, tap_state_t endstate);
+int interface_jtag_add_runtest(int num_cycles, tap_state_t endstate, struct jtag_tap *tap);
 
 int interface_add_tms_seq(unsigned num_bits,
 		const uint8_t *bits, enum tap_state state);

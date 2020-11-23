@@ -114,6 +114,38 @@ COMMAND_HANDLER(ust_jtagprobe_handle_host_command)
 	return ERROR_COMMAND_SYNTAX_ERROR;
 }
 
+COMMAND_HANDLER(ust_jtagprobe_handle_freerun)
+{
+	if (CMD_ARGC == 1) {
+		struct jtag_command *jtg_cmd = cmd_queue_alloc(sizeof(struct jtag_command));
+		struct free_run_command *frc = cmd_queue_alloc(sizeof(struct free_run_command));
+
+		jtag_queue_command(jtg_cmd);
+		jtg_cmd->type = JTAG_FREERUN;
+		jtg_cmd->cmd.freerun = frc;
+		frc->freerun = atoi(CMD_ARGV[0]);
+
+		return ERROR_OK;
+	}
+	return ERROR_COMMAND_SYNTAX_ERROR;
+}
+
+COMMAND_HANDLER(ust_jtagprobe_handle_clockdivider)
+{
+	if (CMD_ARGC == 1) {
+		struct jtag_command *jtg_cmd = cmd_queue_alloc(sizeof(struct jtag_command));
+		struct clock_divide_command *cdc = cmd_queue_alloc(sizeof(struct clock_divide_command));
+
+		jtag_queue_command(jtg_cmd);
+		jtg_cmd->type = JTAG_CLOCK_DIVIDE;
+		jtg_cmd->cmd.clock_divide = cdc;
+		cdc->divisor = atoi(CMD_ARGV[0]);
+
+		return ERROR_OK;
+	}
+	return ERROR_COMMAND_SYNTAX_ERROR;
+}
+
 static const struct command_registration ust_jtagprobe_command_handlers[] = {
 	{
 		.name = "ust_jtagprobe_port",
@@ -128,6 +160,20 @@ static const struct command_registration ust_jtagprobe_command_handlers[] = {
 		.mode = COMMAND_CONFIG,
 		.help = "Set the host to use to connect to the remote jtag.\n",
 		.usage = "host_name",
+	},
+	{
+		.name = "ust_jtagprobe_freerun",
+		.handler = ust_jtagprobe_handle_freerun,
+		.mode = COMMAND_CONFIG,
+		.help = "Switches the free run on or off\n",
+		.usage = "bool",
+	},
+	{
+		.name = "ust_jtagprobe_clockdivider",
+		.handler = ust_jtagprobe_handle_clockdivider,
+		.mode = COMMAND_CONFIG,
+		.help = "Divides the clock speed by the provided value\n",
+		.usage = "clock_divider",
 	},
 	COMMAND_REGISTRATION_DONE,
 };
@@ -145,17 +191,28 @@ int ust_jtagprobe_execute_queue(void)
 	if(ust_version == 2 && !(ust_version_info_sent))
 	{
 		uint32_t args[1]  = {2};
-		ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_NETWORK_VERSION, 1, args);
+		ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_NETWORK_VERSION, 1, args, NULL);
 		ust_version_info_sent = true;
 		ust_version = args[0];
 	}
 
 	while (cmd) {
-
-	    if(cmd->tap == NULL)
+	    /* Version 1 can handle commands with no TAP(JPAM) specified as it 
+           only supports a single JPAM */
+        if ((ust_version == 2) && (cmd->tap == NULL))
 	    {
-			cmd = cmd->next;
-			continue;
+            if (cmd->type == JTAG_RUNTEST)
+            {
+                assert(false);
+                LOG_ERROR("Command received with no TAP using JTAGProbe V2. Exiting.");
+				exit(-1);
+            }
+            
+            if ((cmd->type != JTAG_CLOCK_DIVIDE) && (cmd->type != JTAG_FREERUN))
+            {
+                cmd = cmd->next;
+                continue;
+            }
 	    }
 
 		switch (cmd->type) {
@@ -178,7 +235,7 @@ int ust_jtagprobe_execute_queue(void)
 			}
 			for (i=0; i<cmd->cmd.runtest->num_cycles; i++) {
 				if (ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_IDLE,
-										   0, NULL) != 0) {
+										   0, NULL, cmd->tap) != 0) {
 					retval = ERROR_JTAG_QUEUE_FAILED;
 				}
 			}
@@ -226,6 +283,41 @@ int ust_jtagprobe_execute_queue(void)
 			LOG_ERROR("UNSUPPORTED: Request to explicitly set tms. Exiting.");
 			exit(-1);
 			break;
+		case JTAG_FREERUN:
+        {
+            bool success = false;
+            for (struct jtag_tap* tap = jtag_all_taps(); tap; tap = tap->next_tap)
+            {
+                uint32_t args_free[1]  = {cmd->cmd.freerun->freerun};
+                if (ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_FREERUN, 1, args_free, tap) != 0)
+                {
+                    if (success)
+                    {
+                        LOG_ERROR("Failed to set freerun on PAM %d. Hardware is now in an inconsistant state. Exiting.", tap->pam);
+                        exit(-1);
+                    }
+                    retval = ERROR_JTAG_QUEUE_FAILED;
+                }
+                else
+                {
+                    success = true;
+                }
+            }
+			break;
+        }
+		case JTAG_CLOCK_DIVIDE:
+        {
+            uint32_t args_free[1]  = {cmd->cmd.clock_divide->divisor};
+            for (struct jtag_tap* tap = jtag_all_taps(); tap; tap = tap->next_tap)
+            {
+                if (ust_jtagprobe_send_cmd(ust_ctx, JTAGPROBE_CLOCK_DIVIDER, 1, args_free, tap) != 0)
+                {
+                    LOG_ERROR("Failed to set clock divide on PAM %d. PAM's are now running at different speeds.", tap->pam);
+                    retval = ERROR_JTAG_QUEUE_FAILED;
+                }
+            }
+			break;
+        }
 		default:
 			LOG_ERROR("BUG: unknown JTAG command type encountered");
 			exit(-1);
